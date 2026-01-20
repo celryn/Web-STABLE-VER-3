@@ -30,3 +30,7 @@ outputType = "vnc"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "./startup"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["bash", "./startup"]
