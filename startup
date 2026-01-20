@@ -3,51 +3,26 @@
 exec > /tmp/startup.log 2>&1
 set -x
 
-echo "Starting VNC and Browser setup..."
-
-# Clean up any existing locks
-rm -f /tmp/.X99-lock
-
-# 1. Start Xvfb (Virtual Framebuffer)
-Xvfb :99 -screen 0 1280x720x24 &
-export DISPLAY=:99
-
-# 2. Start a window manager (fluxbox)
-fluxbox &
-
-# 3. Start x11vnc to expose the X server via VNC
-x11vnc -display :99 -nopw -listen localhost -xkb -forever -shared &
-
-# 4. Start websockify to bridge VNC to WebSockets on port 5000
-NOVNC_PATH=$(find /nix/store -maxdepth 3 -type d -name "novnc" -path "*/share/novnc" 2>/dev/null | head -n 1)
-if [ -z "$NOVNC_PATH" ]; then
-    NOVNC_PATH="/usr/share/novnc"
-fi
-
-WEBSOCKIFY_CMD=$(find /nix/store -maxdepth 3 -type f -executable -name "websockify" 2>/dev/null | head -n 1)
-if [ -z "$WEBSOCKIFY_CMD" ]; then
-    WEBSOCKIFY_CMD="websockify"
-fi
-
-# Run websockify in a way that opens port 5000
-$WEBSOCKIFY_CMD 5000 localhost:5900 --web "$NOVNC_PATH" &
-
 # Find the browser
 if command -v ungoogled-chromium &> /dev/null; then
     BROWSER="ungoogled-chromium"
 elif command -v chromium &> /dev/null; then
     BROWSER="chromium"
 else
-    BROWSER=$(find /nix/store -maxdepth 4 -type f -executable -name "chromium" | head -n 1)
+    BROWSER=$(find /nix/store -maxdepth 4 -type f -executable -name "chromium" 2>/dev/null | head -n 1)
+fi
+
+if [ -z "$BROWSER" ]; then
+    echo "Chromium not found"
+    exit 1
 fi
 
 echo "Launching $BROWSER..."
 
-# 5. Launch browser
+# Launch browser directly - Replit VNC handles the X server
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
-    --remote-debugging-port=9222 \
     --start-maximized \
     --no-first-run \
     --no-default-browser-check \
