@@ -26,9 +26,9 @@ fi
 
 echo "Starting $BROWSER..."
 
-# Set DBUS variables to empty to prevent connection attempts
-export DBUS_SESSION_BUS_ADDRESS=""
-export DBUS_SYSTEM_BUS_ADDRESS=""
+# Completely unset DBUS variables to avoid library initialization issues
+unset DBUS_SESSION_BUS_ADDRESS
+unset DBUS_SYSTEM_BUS_ADDRESS
 
 # Launch browser with stability flags
 # --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
@@ -38,6 +38,7 @@ export DBUS_SYSTEM_BUS_ADDRESS=""
 # --disable-gpu: prevents GPU-related crashes
 # --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
 # --allowed-origins=*: Allow all origins for the debugger
+# --dbus-stub: Disables D-Bus connection
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
