@@ -33,4 +33,4 @@ args = "bash -c \"while true; do ./startup; sleep 1; done\""
 
 [deployment]
 deploymentTarget = "vm"
-run = ["bash", "-c", "while true; do ./startup; sleep 1; done"]
+run = ["./startup"]
