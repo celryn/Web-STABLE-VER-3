@@ -26,6 +26,10 @@ fi
 
 echo "Starting $BROWSER..."
 
+# Force DBUS to a dummy address to stop the "unknown address type" error
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/dev/null"
+export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/dev/null"
+
 # Launch browser with stability flags
 # --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
 # --remote-debugging-address=0.0.0.0
