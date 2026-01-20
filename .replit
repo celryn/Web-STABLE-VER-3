@@ -1,5 +1,6 @@
 run = "cowsay Configure me!"
 entrypoint = "README.md"
+modules = ["python-3.11"]
 
 [nix]
 channel = "stable-24_11"
@@ -29,8 +30,12 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "./startup"
+args = "python3 ./startup.py"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["./startup"]
+run = ["python3", "./startup.py"]
+
+[[ports]]
+localPort = 5000
+externalPort = 80
