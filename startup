@@ -25,7 +25,6 @@ def run_server():
         print(f"Port {PORT} already in use, skipping HTTP server startup.")
         return
     
-    # Use allow_reuse_address to avoid "Address already in use" on restarts
     socketserver.TCPServer.allow_reuse_address = True
     try:
         with socketserver.TCPServer(("", PORT), Handler) as httpd:
@@ -35,7 +34,6 @@ def run_server():
         print(f"Failed to start HTTP server: {e}")
 
 def run_browser():
-    # Find the browser
     browser = None
     for cmd in ["ungoogled-chromium", "chromium"]:
         try:
@@ -46,7 +44,6 @@ def run_browser():
             continue
     
     if not browser:
-        # Try to find in nix store as a last resort
         try:
             res = subprocess.run("find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1", shell=True, capture_output=True, text=True)
             browser = res.stdout.strip()
@@ -57,17 +54,15 @@ def run_browser():
         print("Chromium not found")
         return
 
-    print(f"Launching {browser}...")
+    print(f"Launching {browser} with environment display...")
     
     while True:
         try:
-            # We use --ozone-platform=headless or similar if needed, 
-            # but for VNC we want regular GUI mode.
-            # "Failed to initialize platform" often means it's trying to use X11 without a display.
-            # In Replit VNC, DISPLAY should be set by the environment.
             env = os.environ.copy()
+            # If we're in a Replit VNC environment, it usually provides :0
+            # If not, and we're seeing initialization errors, we check for available displays
             if "DISPLAY" not in env:
-                env["DISPLAY"] = ":0" # Default for many VNC setups
+                env["DISPLAY"] = ":0"
             
             subprocess.run([
                 browser,
@@ -86,11 +81,6 @@ def run_browser():
         time.sleep(1)
 
 if __name__ == "__main__":
-    # Ensure data dir exists
     os.makedirs("/tmp/chromium-data", exist_ok=True)
-    
-    # Start HTTP server in a thread to open port 5000
     threading.Thread(target=run_server, daemon=True).start()
-    
-    # Start the browser
     run_browser()
