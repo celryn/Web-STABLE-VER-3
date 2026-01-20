@@ -17,9 +17,9 @@ if [ -z "$BROWSER" ]; then
     exit 1
 fi
 
-echo "Launching $BROWSER with performance optimizations..."
+echo "Launching $BROWSER with extreme performance optimizations..."
 
-# Launch browser with performance flags
+# Launch browser with advanced performance and low-latency flags
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -28,7 +28,7 @@ exec "$BROWSER" \
     --no-default-browser-check \
     --user-data-dir=/tmp/chromium-data \
     --disable-dev-shm-usage \
-    --js-flags="--max-old-space-size=4096" \
+    --js-flags="--max-old-space-size=4096 --expose-gc" \
     --disable-extensions \
     --disable-component-extensions-with-background-pages \
     --disable-background-networking \
@@ -37,4 +37,15 @@ exec "$BROWSER" \
     --disable-default-apps \
     --mute-audio \
     --no-service-autorun \
+    --disable-software-rasterizer \
+    --disable-background-timer-throttling \
+    --disable-backgrounding-occluded-windows \
+    --disable-breakpad \
+    --disable-ipc-flooding-protection \
+    --disable-hang-monitor \
+    --disable-prompt-on-repost \
+    --disable-renderer-backgrounding \
+    --force-color-profile=srgb \
+    --num-raster-threads=4 \
+    --enable-zero-copy \
     "https://www.google.com"
