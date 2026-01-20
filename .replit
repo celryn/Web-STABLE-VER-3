@@ -2,5 +2,31 @@ run = "cowsay Configure me!"
 entrypoint = "README.md"
 
 [nix]
-channel = "stable-24_05"
-packages = ["cowsay"]
+channel = "stable-24_11"
+packages = ["cowsay", "ungoogled-chromium", "chromium"]
+
+[agent]
+expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "browser-startup"
+
+[[workflows.workflow]]
+name = "browser-startup"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "./startup"
+
+[workflows.workflow.metadata]
+outputType = "console"
