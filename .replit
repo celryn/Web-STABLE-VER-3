@@ -29,7 +29,7 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "bash -c \"while true; do ./startup; sleep 1; done\""
+args = "./startup"
 
 [deployment]
 deploymentTarget = "vm"
