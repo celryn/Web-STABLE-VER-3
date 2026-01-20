@@ -26,11 +26,21 @@ fi
 
 echo "Starting $BROWSER..."
 
-# Unset DBUS variables completely to let Chromium handle its own stubbing
-unset DBUS_SESSION_BUS_ADDRESS
-unset DBUS_SYSTEM_BUS_ADDRESS
+# Set DBUS variables to empty to prevent connection attempts
+export DBUS_SESSION_BUS_ADDRESS=""
+export DBUS_SYSTEM_BUS_ADDRESS=""
 
 # Launch browser with stability flags
+# --dbus-stub: Disables D-Bus connection
+# --headless=new: Run in stable headless mode
+# --no-sandbox: required for many container environments
+# --disable-gpu: prevents GPU-related crashes
+# --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
+# --allowed-origins=*: Fixes "Host header is specified" error
+# --disable-features=VizDisplayCompositor: bypasses display bus requirements
+# --no-zygote: disables zygote process
+# --whitelisted-ips="": Allow all IPs for remote debugging
+# --disable-web-security: Help with host header issues
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
