@@ -32,5 +32,5 @@ task = "shell.exec"
 args = "./startup"
 
 [deployment]
-deploymentTarget = "cloudrun"
-run = ["bash", "./startup"]
+deploymentTarget = "vm"
+run = ["./startup"]
