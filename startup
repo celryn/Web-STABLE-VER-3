@@ -31,16 +31,13 @@ export DBUS_SESSION_BUS_ADDRESS=""
 export DBUS_SYSTEM_BUS_ADDRESS=""
 
 # Launch browser with stability flags
-# --dbus-stub: Disables D-Bus connection
+# --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
+# --remote-debugging-address=127.0.0.1: BIND TO LOCALHOST
 # --headless=new: Run in stable headless mode
 # --no-sandbox: required for many container environments
 # --disable-gpu: prevents GPU-related crashes
 # --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
-# --allowed-origins=*: Fixes "Host header is specified" error
-# --disable-features=VizDisplayCompositor: bypasses display bus requirements
-# --no-zygote: disables zygote process
-# --whitelisted-ips="": Allow all IPs for remote debugging
-# --disable-web-security: Help with host header issues
+# --allowed-origins=*: Allow all origins for the debugger
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -49,12 +46,10 @@ exec "$BROWSER" \
     --start-maximized \
     --no-first-run \
     --remote-debugging-port=5000 \
-    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-address=127.0.0.1 \
     --user-data-dir="$PROFILE_DIR" \
     --no-zygote \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
     --headless=new \
-    --allowed-origins=* \
-    --whitelisted-ips="" \
-    --disable-web-security
+    --allowed-origins=*
