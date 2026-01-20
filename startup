@@ -11,20 +11,13 @@ if command -v ungoogled-chromium &> /dev/null; then
 elif command -v chromium &> /dev/null; then
     BROWSER="chromium"
 else
-    # Fallback to absolute path from bash output
+    # Fallback to absolute path
     BROWSER="/nix/store/43y6k6fj85l4kcd1yan43hpdld6nmjmp-ungoogled-chromium-131.0.6778.204/bin/chromium"
 fi
 
-if [ ! -f "$BROWSER" ] && ! command -v "$BROWSER" &> /dev/null; then
-    echo "Error: Chromium binary not found at $BROWSER"
-    exit 1
-fi
+echo "Launching $BROWSER with Google..."
 
-echo "Launching $BROWSER..."
-
-# Launch browser in GUI mode
-# Use --no-sandbox as required in container environments
-# Use --remote-debugging-port=9222 for potential debugging
+# Launch browser in GUI mode with a default URL
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -32,4 +25,5 @@ exec "$BROWSER" \
     --start-maximized \
     --no-first-run \
     --no-default-browser-check \
-    --user-data-dir=/tmp/chromium-data
+    --user-data-dir=/tmp/chromium-data \
+    "https://www.google.com"
