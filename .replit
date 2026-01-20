@@ -3,7 +3,7 @@ entrypoint = "README.md"
 
 [nix]
 channel = "stable-24_11"
-packages = ["cowsay", "ungoogled-chromium", "chromium", "xorg.xorgserver", "fluxbox"]
+packages = ["cowsay", "ungoogled-chromium", "chromium", "xorg.xorgserver", "fluxbox", "x11vnc", "python311Packages.websockify", "novnc"]
 
 [agent]
 expertMode = true

@@ -3,7 +3,34 @@
 exec > /tmp/startup.log 2>&1
 set -x
 
-echo "Starting chromium launch script..."
+echo "Starting VNC and Browser setup..."
+
+# Clean up any existing locks
+rm -f /tmp/.X99-lock
+
+# 1. Start Xvfb (Virtual Framebuffer)
+Xvfb :99 -screen 0 1280x720x24 &
+export DISPLAY=:99
+
+# 2. Start a window manager (fluxbox)
+fluxbox &
+
+# 3. Start x11vnc to expose the X server via VNC
+x11vnc -display :99 -nopw -listen localhost -xkb -forever -shared &
+
+# 4. Start websockify to bridge VNC to WebSockets on port 5000
+NOVNC_PATH=$(find /nix/store -maxdepth 3 -type d -name "novnc" -path "*/share/novnc" 2>/dev/null | head -n 1)
+if [ -z "$NOVNC_PATH" ]; then
+    NOVNC_PATH="/usr/share/novnc"
+fi
+
+WEBSOCKIFY_CMD=$(find /nix/store -maxdepth 3 -type f -executable -name "websockify" 2>/dev/null | head -n 1)
+if [ -z "$WEBSOCKIFY_CMD" ]; then
+    WEBSOCKIFY_CMD="websockify"
+fi
+
+# Run websockify in a way that opens port 5000
+$WEBSOCKIFY_CMD 5000 localhost:5900 --web "$NOVNC_PATH" &
 
 # Find the browser
 if command -v ungoogled-chromium &> /dev/null; then
@@ -11,13 +38,12 @@ if command -v ungoogled-chromium &> /dev/null; then
 elif command -v chromium &> /dev/null; then
     BROWSER="chromium"
 else
-    # Fallback to absolute path
-    BROWSER="/nix/store/43y6k6fj85l4kcd1yan43hpdld6nmjmp-ungoogled-chromium-131.0.6778.204/bin/chromium"
+    BROWSER=$(find /nix/store -maxdepth 4 -type f -executable -name "chromium" | head -n 1)
 fi
 
-echo "Launching $BROWSER with Google..."
+echo "Launching $BROWSER..."
 
-# Launch browser in GUI mode with a default URL
+# 5. Launch browser
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
