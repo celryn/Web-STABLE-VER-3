@@ -1,4 +1,7 @@
 #!/bin/bash
+# Remove potential lock files before starting
+rm -rf ~/.config/chromium/SingletonLock ~/.config/google-chrome/SingletonLock
+
 # Check for ungoogled-chromium or chromium
 if command -v ungoogled-chromium &> /dev/null; then
     BROWSER="ungoogled-chromium"
@@ -14,10 +17,7 @@ if [ -z "$BROWSER" ]; then
 fi
 
 # Launch browser with stability flags
-# --disable-dev-shm-usage: prevents crashes in container environments
-# --no-sandbox: required for many container environments
-# --disable-gpu: prevents GPU-related crashes
-# --remote-debugging-port: allows for inspection if needed
+# --user-data-dir: helps keep profile consistent
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -25,4 +25,5 @@ exec "$BROWSER" \
     --disable-software-rasterizer \
     --start-maximized \
     --no-first-run \
-    --remote-debugging-port=9222
+    --remote-debugging-port=9222 \
+    --user-data-dir=$HOME/.config/chromium-profile
