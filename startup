@@ -13,5 +13,16 @@ if [ -z "$BROWSER" ]; then
     exit 1
 fi
 
-# Launch browser in GUI mode for VNC
-exec "$BROWSER" --no-sandbox --disable-gpu --start-maximized --no-first-run
+# Launch browser with stability flags
+# --disable-dev-shm-usage: prevents crashes in container environments
+# --no-sandbox: required for many container environments
+# --disable-gpu: prevents GPU-related crashes
+# --remote-debugging-port: allows for inspection if needed
+exec "$BROWSER" \
+    --no-sandbox \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --disable-software-rasterizer \
+    --start-maximized \
+    --no-first-run \
+    --remote-debugging-port=9222
