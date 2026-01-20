@@ -17,9 +17,9 @@ if [ -z "$BROWSER" ]; then
     exit 1
 fi
 
-echo "Launching $BROWSER..."
+echo "Launching $BROWSER with performance optimizations..."
 
-# Launch browser directly - Replit VNC handles the X server
+# Launch browser with performance flags
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -27,4 +27,14 @@ exec "$BROWSER" \
     --no-first-run \
     --no-default-browser-check \
     --user-data-dir=/tmp/chromium-data \
+    --disable-dev-shm-usage \
+    --js-flags="--max-old-space-size=4096" \
+    --disable-extensions \
+    --disable-component-extensions-with-background-pages \
+    --disable-background-networking \
+    --disable-sync \
+    --metrics-recording-only \
+    --disable-default-apps \
+    --mute-audio \
+    --no-service-autorun \
     "https://www.google.com"
