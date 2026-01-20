@@ -30,11 +30,11 @@ outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 ./startup.py"
+args = "./startup"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["python3", "./startup.py"]
+run = ["./startup"]
 
 [[ports]]
 localPort = 5000

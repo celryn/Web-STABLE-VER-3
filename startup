@@ -1,49 +1,74 @@
-#!/bin/bash
-# Enable logging
-exec > /tmp/startup.log 2>&1
-set -x
+#!/usr/bin/env python3
+import http.server
+import socketserver
+import os
+import subprocess
+import threading
+import time
 
-# 1. Setup directories
-rm -rf /tmp/chromium-data
-mkdir -p /tmp/chromium-data
+PORT = 5000
 
-# 2. Setup VNC Bridge (noVNC + websockify) to open port 5000
-# Replit deployment requires an open port (5000 is standard)
-NOVNC_PATH=$(find /nix/store -maxdepth 3 -type d -name "novnc" -path "*/share/novnc" 2>/dev/null | head -n 1)
-WEBSOCKIFY_CMD=$(find /nix/store -maxdepth 3 -type f -executable -name "websockify" 2>/dev/null | head -n 1)
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"<html><body><h1>Browser is running</h1><p>Check the VNC tab to see the interface.</p></body></html>")
 
-if [ -n "$WEBSOCKIFY_CMD" ] && [ -n "$NOVNC_PATH" ]; then
-    # websockify --web [path to novnc] [port] [target]
-    # This will open port 5000 and proxy it to the internal VNC server
-    $WEBSOCKIFY_CMD 5000 localhost:5900 --web "$NOVNC_PATH" &
-fi
+def run_server():
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print(f"Serving at port {PORT}")
+        httpd.serve_forever()
 
-# 3. Find the browser
-if command -v ungoogled-chromium &> /dev/null; then
-    BROWSER="ungoogled-chromium"
-elif command -v chromium &> /dev/null; then
-    BROWSER="chromium"
-else
-    BROWSER=$(find /nix/store -maxdepth 4 -type f -executable -name "chromium" 2>/dev/null | head -n 1)
-fi
+def run_browser():
+    # Find the browser
+    browser = None
+    for cmd in ["ungoogled-chromium", "chromium"]:
+        try:
+            subprocess.run(["which", cmd], check=True, capture_output=True)
+            browser = cmd
+            break
+        except subprocess.CalledProcessError:
+            continue
+    
+    if not browser:
+        # Try to find in nix store as a last resort
+        try:
+            res = subprocess.run("find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1", shell=True, capture_output=True, text=True)
+            browser = res.stdout.strip()
+        except:
+            pass
 
-if [ -z "$BROWSER" ]; then
-    echo "Chromium not found"
-    exit 1
-fi
+    if not browser:
+        print("Chromium not found")
+        return
 
-echo "Launching $BROWSER..."
+    print(f"Launching {browser}...")
+    
+    while True:
+        try:
+            subprocess.run([
+                browser,
+                "--no-sandbox",
+                "--disable-gpu",
+                "--user-data-dir=/tmp/chromium-data",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "https://www.google.com"
+            ])
+        except Exception as e:
+            print(f"Browser error: {e}")
+        
+        print("Browser exited, restarting in 1s...")
+        time.sleep(1)
 
-# 4. Launch browser and keep it running
-while true; do
-    "$BROWSER" \
-        --no-sandbox \
-        --disable-gpu \
-        --user-data-dir=/tmp/chromium-data \
-        --disable-dev-shm-usage \
-        --no-first-run \
-        --no-default-browser-check \
-        "https://www.google.com"
-    echo "Browser exited with code $?. Restarting in 1s..."
-    sleep 1
-done
+if __name__ == "__main__":
+    # Ensure data dir exists
+    os.makedirs("/tmp/chromium-data", exist_ok=True)
+    
+    # Start HTTP server in a thread to open port 5000
+    threading.Thread(target=run_server, daemon=True).start()
+    
+    # Start the browser
+    run_browser()
