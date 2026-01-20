@@ -26,21 +26,18 @@ fi
 
 echo "Starting $BROWSER..."
 
-# Force DBUS to a dummy TCP address to satisfy the "TCP or UNIX" requirement without actually using a bus
-export DBUS_SESSION_BUS_ADDRESS="tcp:host=localhost,port=0"
-export DBUS_SYSTEM_BUS_ADDRESS="tcp:host=localhost,port=0"
+# Set DBUS variables to empty to prevent connection attempts
+export DBUS_SESSION_BUS_ADDRESS=""
+export DBUS_SYSTEM_BUS_ADDRESS=""
 
 # Launch browser with stability flags
 # --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
-# --remote-debugging-address=0.0.0.0: BIND TO 0.0.0.0 FOR ACCESSIBILITY
+# --remote-debugging-address=127.0.0.1: STRICTLY BIND TO LOCALHOST
 # --headless=new: Run in stable headless mode
 # --no-sandbox: required for many container environments
 # --disable-gpu: prevents GPU-related crashes
 # --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
-# --allowed-origins=*: Allow all origins for the debugger (CRITICAL FOR HOST HEADER ERROR)
-# --dbus-stub: Disables D-Bus connection
-# --whitelisted-ips="": Allow all IPs
-# --disable-web-security: Help with host header issues
+# --allowed-origins=http://localhost:5000,http://127.0.0.1:5000: STRICTLY LOCALHOST ORIGINS
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -49,12 +46,10 @@ exec "$BROWSER" \
     --start-maximized \
     --no-first-run \
     --remote-debugging-port=5000 \
-    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-address=127.0.0.1 \
     --user-data-dir="$PROFILE_DIR" \
     --no-zygote \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
     --headless=new \
-    --allowed-origins='*' \
-    --whitelisted-ips="" \
-    --disable-web-security
+    --allowed-origins=http://localhost:5000,http://127.0.0.1:5000
