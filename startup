@@ -27,16 +27,18 @@ fi
 echo "Starting $BROWSER..."
 
 # Launch browser with stability flags
-# --dbus-stub: Disables D-Bus connection
-# --disable-gpu: prevents GPU-related crashes
-# --disable-software-rasterizer: prevents software rendering issues
-# --no-sandbox: required for many container environments
-# --no-zygote: disables zygote process
-# --headless=new: Run in a more stable headless mode
-# --remote-debugging-port=9222
+# --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
 # --remote-debugging-address=0.0.0.0
-# --disable-features=VizDisplayCompositor
-# --allowed-origins=*: Fixes "Host header is specified" error by allowing all origins for remote debugging
+# --headless=new: Run in stable headless mode
+# --no-sandbox: required for many container environments
+# --disable-gpu: prevents GPU-related crashes
+# --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
+# --allowed-origins=*: Fixes "Host header is specified" error
+# --disable-features=VizDisplayCompositor: bypasses display bus requirements
+# --dbus-stub: Disables D-Bus connection
+# --no-zygote: disables zygote process
+# --whitelisted-ips="": Allow all IPs for remote debugging
+# --disable-web-security: Help with host header issues
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -44,11 +46,13 @@ exec "$BROWSER" \
     --disable-software-rasterizer \
     --start-maximized \
     --no-first-run \
-    --remote-debugging-port=9222 \
+    --remote-debugging-port=5000 \
     --remote-debugging-address=0.0.0.0 \
     --user-data-dir="$PROFILE_DIR" \
     --no-zygote \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
     --headless=new \
-    --allowed-origins=*
+    --allowed-origins=* \
+    --whitelisted-ips="" \
+    --disable-web-security
