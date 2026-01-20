@@ -26,19 +26,21 @@ fi
 
 echo "Starting $BROWSER..."
 
-# Completely unset DBUS variables to avoid library initialization issues
-unset DBUS_SESSION_BUS_ADDRESS
-unset DBUS_SYSTEM_BUS_ADDRESS
+# Force DBUS to a dummy TCP address to satisfy the "TCP or UNIX" requirement without actually using a bus
+export DBUS_SESSION_BUS_ADDRESS="tcp:host=localhost,port=0"
+export DBUS_SYSTEM_BUS_ADDRESS="tcp:host=localhost,port=0"
 
 # Launch browser with stability flags
 # --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
-# --remote-debugging-address=127.0.0.1: BIND TO LOCALHOST
+# --remote-debugging-address=0.0.0.0: BIND TO 0.0.0.0 FOR ACCESSIBILITY
 # --headless=new: Run in stable headless mode
 # --no-sandbox: required for many container environments
 # --disable-gpu: prevents GPU-related crashes
 # --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
 # --allowed-origins=*: Allow all origins for the debugger
 # --dbus-stub: Disables D-Bus connection
+# --whitelisted-ips="": Allow all IPs
+# --disable-web-security: Help with host header issues
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -47,10 +49,12 @@ exec "$BROWSER" \
     --start-maximized \
     --no-first-run \
     --remote-debugging-port=5000 \
-    --remote-debugging-address=127.0.0.1 \
+    --remote-debugging-address=0.0.0.0 \
     --user-data-dir="$PROFILE_DIR" \
     --no-zygote \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
     --headless=new \
-    --allowed-origins=*
+    --allowed-origins=* \
+    --whitelisted-ips="" \
+    --disable-web-security
