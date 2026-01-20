@@ -32,10 +32,11 @@ echo "Starting $BROWSER..."
 # --disable-software-rasterizer: prevents software rendering issues
 # --no-sandbox: required for many container environments
 # --no-zygote: disables zygote process
-# --headless=new: Run in a more stable headless mode that doesn't rely on X11/Bus
-# --remote-debugging-address=0.0.0.0: allows external inspection
+# --headless=new: Run in a more stable headless mode
 # --remote-debugging-port=9222
-# --disable-features=VizDisplayCompositor: bypasses some display bus requirements
+# --remote-debugging-address=0.0.0.0
+# --disable-features=VizDisplayCompositor
+# --allowed-origins=*: Fixes "Host header is specified" error by allowing all origins for remote debugging
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -49,4 +50,5 @@ exec "$BROWSER" \
     --no-zygote \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
-    --headless=new
+    --headless=new \
+    --allowed-origins=*
