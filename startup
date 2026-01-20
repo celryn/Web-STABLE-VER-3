@@ -1,17 +1,35 @@
 #!/bin/bash
-# Check for ungoogled-chromium or chromium
+# Enable logging
+exec > /tmp/startup.log 2>&1
+set -x
+
+echo "Starting chromium launch script..."
+
+# Find the browser
 if command -v ungoogled-chromium &> /dev/null; then
     BROWSER="ungoogled-chromium"
 elif command -v chromium &> /dev/null; then
     BROWSER="chromium"
 else
-    BROWSER=$(ls /nix/store/*/bin/chromium 2>/dev/null | head -n 1)
+    # Fallback to absolute path from bash output
+    BROWSER="/nix/store/43y6k6fj85l4kcd1yan43hpdld6nmjmp-ungoogled-chromium-131.0.6778.204/bin/chromium"
 fi
 
-if [ -z "$BROWSER" ]; then
-    echo "Chromium not found"
+if [ ! -f "$BROWSER" ] && ! command -v "$BROWSER" &> /dev/null; then
+    echo "Error: Chromium binary not found at $BROWSER"
     exit 1
 fi
 
-# Launch browser in GUI mode for VNC
-exec "$BROWSER" --no-sandbox --disable-gpu --start-maximized --no-first-run
+echo "Launching $BROWSER..."
+
+# Launch browser in GUI mode
+# Use --no-sandbox as required in container environments
+# Use --remote-debugging-port=9222 for potential debugging
+exec "$BROWSER" \
+    --no-sandbox \
+    --disable-gpu \
+    --remote-debugging-port=9222 \
+    --start-maximized \
+    --no-first-run \
+    --no-default-browser-check \
+    --user-data-dir=/tmp/chromium-data
