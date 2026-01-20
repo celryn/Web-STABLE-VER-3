@@ -27,7 +27,15 @@ fi
 echo "Starting $BROWSER..."
 
 # Launch browser with stability flags
-# --dbus-stub: Disables D-Bus connection which prevents the system_bus_socket error
+# --dbus-stub: Disables D-Bus connection
+# --disable-gpu: prevents GPU-related crashes
+# --disable-software-rasterizer: prevents software rendering issues
+# --no-sandbox: required for many container environments
+# --no-zygote: disables zygote process
+# --headless=new: Run in a more stable headless mode that doesn't rely on X11/Bus
+# --remote-debugging-address=0.0.0.0: allows external inspection
+# --remote-debugging-port=9222
+# --disable-features=VizDisplayCompositor: bypasses some display bus requirements
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -36,6 +44,9 @@ exec "$BROWSER" \
     --start-maximized \
     --no-first-run \
     --remote-debugging-port=9222 \
+    --remote-debugging-address=0.0.0.0 \
     --user-data-dir="$PROFILE_DIR" \
     --no-zygote \
-    --dbus-stub
+    --dbus-stub \
+    --disable-features=VizDisplayCompositor \
+    --headless=new
