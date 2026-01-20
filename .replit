@@ -33,4 +33,4 @@ args = "./startup"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["bash", "startup"]
+run = ["./startup"]
