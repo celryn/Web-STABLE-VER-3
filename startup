@@ -27,12 +27,7 @@ fi
 echo "Starting $BROWSER..."
 
 # Launch browser with stability flags
-# --user-data-dir: helps keep profile consistent and isolated
-# --no-sandbox: required for many container environments
-# --disable-gpu: prevents GPU-related crashes in headless/cloud envs
-# --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
-# --no-zygote: disables zygote process for stability
-# --single-process: can improve stability in restricted resource environments (optional)
+# --dbus-stub: Disables D-Bus connection which prevents the system_bus_socket error
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -42,4 +37,5 @@ exec "$BROWSER" \
     --no-first-run \
     --remote-debugging-port=9222 \
     --user-data-dir="$PROFILE_DIR" \
-    --no-zygote
+    --no-zygote \
+    --dbus-stub
