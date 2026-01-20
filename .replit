@@ -3,7 +3,7 @@ entrypoint = "README.md"
 
 [nix]
 channel = "stable-24_11"
-packages = ["cowsay", "ungoogled-chromium", "chromium"]
+packages = ["cowsay", "ungoogled-chromium", "chromium", "xorg.xorgserver", "fluxbox"]
 
 [agent]
 expertMode = true
@@ -24,9 +24,9 @@ args = "browser-startup"
 name = "browser-startup"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "vnc"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "./startup"
-
-[workflows.workflow.metadata]
-outputType = "console"
