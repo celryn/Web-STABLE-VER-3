@@ -23,18 +23,17 @@ fi
 
 echo "Launching $BROWSER..."
 
-# 3. Launch browser and wait for it
-# We remove 'exec' to keep the script process alive
-# and add a wait loop or just tail the log to keep the process running
-"$BROWSER" \
-    --no-sandbox \
-    --disable-gpu \
-    --user-data-dir=/tmp/chromium-data \
-    --disable-dev-shm-usage \
-    --no-first-run \
-    --no-default-browser-check \
-    "https://www.google.com" &
-
-# Keep the script alive so Replit doesn't think the process finished/crashed
-# Tail the browser log or just wait indefinitely
-wait $!
+# 3. Launch browser and keep it running
+# Using a loop here to ensure the process never exits for the deployment
+while true; do
+    "$BROWSER" \
+        --no-sandbox \
+        --disable-gpu \
+        --user-data-dir=/tmp/chromium-data \
+        --disable-dev-shm-usage \
+        --no-first-run \
+        --no-default-browser-check \
+        "https://www.google.com"
+    echo "Browser exited with code $?. Restarting in 1s..."
+    sleep 1
+done
