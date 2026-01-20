@@ -23,14 +23,18 @@ fi
 
 echo "Launching $BROWSER..."
 
-# 3. Launch browser with absolute minimum flags to prevent crashes
-# The 'exec' means this script's process becomes the browser process
-# If the browser crashes, the script exits with the browser's exit code
-exec "$BROWSER" \
+# 3. Launch browser and wait for it
+# We remove 'exec' to keep the script process alive
+# and add a wait loop or just tail the log to keep the process running
+"$BROWSER" \
     --no-sandbox \
     --disable-gpu \
     --user-data-dir=/tmp/chromium-data \
     --disable-dev-shm-usage \
     --no-first-run \
     --no-default-browser-check \
-    "https://www.google.com"
+    "https://www.google.com" &
+
+# Keep the script alive so Replit doesn't think the process finished/crashed
+# Tail the browser log or just wait indefinitely
+wait $!
