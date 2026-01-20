@@ -5,6 +5,7 @@ import os
 import subprocess
 import threading
 import time
+import socket
 
 PORT = 5000
 
@@ -15,10 +16,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"<html><body><h1>Browser is running</h1><p>Check the VNC tab to see the interface.</p></body></html>")
 
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
 def run_server():
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        print(f"Serving at port {PORT}")
-        httpd.serve_forever()
+    if is_port_in_use(PORT):
+        print(f"Port {PORT} already in use, skipping HTTP server startup.")
+        return
+    
+    # Use allow_reuse_address to avoid "Address already in use" on restarts
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        with socketserver.TCPServer(("", PORT), Handler) as httpd:
+            print(f"Serving at port {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Failed to start HTTP server: {e}")
 
 def run_browser():
     # Find the browser
@@ -47,6 +61,14 @@ def run_browser():
     
     while True:
         try:
+            # We use --ozone-platform=headless or similar if needed, 
+            # but for VNC we want regular GUI mode.
+            # "Failed to initialize platform" often means it's trying to use X11 without a display.
+            # In Replit VNC, DISPLAY should be set by the environment.
+            env = os.environ.copy()
+            if "DISPLAY" not in env:
+                env["DISPLAY"] = ":0" # Default for many VNC setups
+            
             subprocess.run([
                 browser,
                 "--no-sandbox",
@@ -56,7 +78,7 @@ def run_browser():
                 "--no-first-run",
                 "--no-default-browser-check",
                 "https://www.google.com"
-            ])
+            ], env=env)
         except Exception as e:
             print(f"Browser error: {e}")
         
