@@ -3,7 +3,7 @@
 exec > /tmp/startup.log 2>&1
 set -x
 
-# 1. Clean up and setup directories
+# 1. Setup directories
 rm -rf /tmp/chromium-data
 mkdir -p /tmp/chromium-data
 
@@ -23,25 +23,14 @@ fi
 
 echo "Launching $BROWSER..."
 
-# 3. Launch browser with compatible flags for cloud environments
-# Removing some extreme flags that might cause crashes in different environments
+# 3. Launch browser with absolute minimum flags to prevent crashes
+# The 'exec' means this script's process becomes the browser process
+# If the browser crashes, the script exits with the browser's exit code
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
-    --start-maximized \
-    --no-first-run \
-    --no-default-browser-check \
     --user-data-dir=/tmp/chromium-data \
     --disable-dev-shm-usage \
-    --js-flags="--max-old-space-size=2048" \
-    --disable-extensions \
-    --disable-background-networking \
-    --disable-sync \
-    --disable-default-apps \
-    --mute-audio \
-    --disable-software-rasterizer \
-    --disable-breakpad \
-    --disable-hang-monitor \
-    --disable-renderer-backgrounding \
-    --num-raster-threads=2 \
+    --no-first-run \
+    --no-default-browser-check \
     "https://www.google.com"
