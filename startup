@@ -3,7 +3,11 @@
 exec > /tmp/startup.log 2>&1
 set -x
 
-# Find the browser
+# 1. Clean up and setup directories
+rm -rf /tmp/chromium-data
+mkdir -p /tmp/chromium-data
+
+# 2. Find the browser
 if command -v ungoogled-chromium &> /dev/null; then
     BROWSER="ungoogled-chromium"
 elif command -v chromium &> /dev/null; then
@@ -17,9 +21,10 @@ if [ -z "$BROWSER" ]; then
     exit 1
 fi
 
-echo "Launching $BROWSER with extreme performance optimizations..."
+echo "Launching $BROWSER..."
 
-# Launch browser with advanced performance and low-latency flags
+# 3. Launch browser with compatible flags for cloud environments
+# Removing some extreme flags that might cause crashes in different environments
 exec "$BROWSER" \
     --no-sandbox \
     --disable-gpu \
@@ -28,24 +33,15 @@ exec "$BROWSER" \
     --no-default-browser-check \
     --user-data-dir=/tmp/chromium-data \
     --disable-dev-shm-usage \
-    --js-flags="--max-old-space-size=4096 --expose-gc" \
+    --js-flags="--max-old-space-size=2048" \
     --disable-extensions \
-    --disable-component-extensions-with-background-pages \
     --disable-background-networking \
     --disable-sync \
-    --metrics-recording-only \
     --disable-default-apps \
     --mute-audio \
-    --no-service-autorun \
     --disable-software-rasterizer \
-    --disable-background-timer-throttling \
-    --disable-backgrounding-occluded-windows \
     --disable-breakpad \
-    --disable-ipc-flooding-protection \
     --disable-hang-monitor \
-    --disable-prompt-on-repost \
     --disable-renderer-backgrounding \
-    --force-color-profile=srgb \
-    --num-raster-threads=4 \
-    --enable-zero-copy \
+    --num-raster-threads=2 \
     "https://www.google.com"
