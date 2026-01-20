@@ -25,18 +25,8 @@ name = "browser-startup"
 author = "agent"
 
 [workflows.workflow.metadata]
-outputType = "webview"
+outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "./startup"
-waitForPort = 5000
-
-[deployment]
-deploymentTarget = "cloudrun"
-run = ["./startup"]
-
-[[ports]]
-localPort = 5000
-externalPort = 80
-exposeLocalhost = true

@@ -1,55 +1,17 @@
 #!/bin/bash
-# Exit on any error
-set -e
-
-# Define profile directory
-PROFILE_DIR="$HOME/.config/chromium-profile"
-
-# Remove potential lock files and cleanup before starting
-rm -rf "$PROFILE_DIR/SingletonLock" "$PROFILE_DIR/SingletonCookie" "$PROFILE_DIR/SingletonSocket"
-rm -rf ~/.config/chromium/SingletonLock ~/.config/google-chrome/SingletonLock
-
 # Check for ungoogled-chromium or chromium
 if command -v ungoogled-chromium &> /dev/null; then
     BROWSER="ungoogled-chromium"
 elif command -v chromium &> /dev/null; then
     BROWSER="chromium"
 else
-    # Fallback search in nix store
     BROWSER=$(ls /nix/store/*/bin/chromium 2>/dev/null | head -n 1)
 fi
 
 if [ -z "$BROWSER" ]; then
-    echo "Error: Chromium/Ungoogled-Chromium not found."
+    echo "Chromium not found"
     exit 1
 fi
 
-echo "Starting $BROWSER..."
-
-# Set DBUS variables to empty to prevent connection attempts
-export DBUS_SESSION_BUS_ADDRESS=""
-export DBUS_SYSTEM_BUS_ADDRESS=""
-
-# Launch browser with stability flags
-# --remote-debugging-port=5000: BIND TO PORT 5000 FOR REPLIT EXPOSURE
-# --remote-debugging-address=127.0.0.1: STRICTLY BIND TO LOCALHOST
-# --headless=new: Run in stable headless mode
-# --no-sandbox: required for many container environments
-# --disable-gpu: prevents GPU-related crashes
-# --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
-# --allowed-origins=http://localhost:5000,http://127.0.0.1:5000: STRICTLY LOCALHOST ORIGINS
-exec "$BROWSER" \
-    --no-sandbox \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --disable-software-rasterizer \
-    --start-maximized \
-    --no-first-run \
-    --remote-debugging-port=5000 \
-    --remote-debugging-address=127.0.0.1 \
-    --user-data-dir="$PROFILE_DIR" \
-    --no-zygote \
-    --dbus-stub \
-    --disable-features=VizDisplayCompositor \
-    --headless=new \
-    --allowed-origins=http://localhost:5000,http://127.0.0.1:5000
+# Launch browser in GUI mode for VNC
+exec "$BROWSER" --no-sandbox --disable-gpu --start-maximized --no-first-run
