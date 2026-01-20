@@ -37,7 +37,7 @@ export DBUS_SYSTEM_BUS_ADDRESS="tcp:host=localhost,port=0"
 # --no-sandbox: required for many container environments
 # --disable-gpu: prevents GPU-related crashes
 # --disable-dev-shm-usage: prevents crashes by avoiding /dev/shm
-# --allowed-origins=*: Allow all origins for the debugger
+# --allowed-origins=*: Allow all origins for the debugger (CRITICAL FOR HOST HEADER ERROR)
 # --dbus-stub: Disables D-Bus connection
 # --whitelisted-ips="": Allow all IPs
 # --disable-web-security: Help with host header issues
@@ -55,6 +55,6 @@ exec "$BROWSER" \
     --dbus-stub \
     --disable-features=VizDisplayCompositor \
     --headless=new \
-    --allowed-origins=* \
+    --allowed-origins='*' \
     --whitelisted-ips="" \
     --disable-web-security
