@@ -72,7 +72,7 @@ def run_browser():
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "https://www.google.com"
+                "http://localhost:5000"
             ], env=env)
         except Exception as e:
             print(f"Browser error: {e}")
