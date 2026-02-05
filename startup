@@ -1,30 +1,39 @@
 #!/usr/bin/env python3
+import http.server
+import socketserver
 import os
 import subprocess
 import threading
 import time
+import socket
 
-def run_x11vnc():
-    """Start x11vnc to capture the X display"""
-    print("Starting x11vnc...")
-    env = os.environ.copy()
-    if "DISPLAY" not in env:
-        env["DISPLAY"] = ":0"
+PORT = 5000
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"<html><body><h1>Browser is running</h1><p>Check the VNC tab to see the interface.</p></body></html>")
+
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+def run_server():
+    if is_port_in_use(PORT):
+        print(f"Port {PORT} already in use, skipping HTTP server startup.")
+        return
     
-    subprocess.Popen([
-        "x11vnc",
-        "-display", ":0",
-        "-forever",
-        "-shared",
-        "-nopw",
-        "-rfbport", "5900",
-        "-localhost"
-    ], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        with socketserver.TCPServer(("", PORT), Handler) as httpd:
+            print(f"Serving at port {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Failed to start HTTP server: {e}")
 
 def run_browser():
-    """Launch browser opening Google"""
-    time.sleep(2)
-    
     browser = None
     for cmd in ["ungoogled-chromium", "chromium"]:
         try:
@@ -36,7 +45,7 @@ def run_browser():
     
     if not browser:
         try:
-            res = subprocess.run("find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1", shell=True, capture_output=True, text=True, timeout=5)
+            res = subprocess.run("find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1", shell=True, capture_output=True, text=True)
             browser = res.stdout.strip()
         except:
             pass
@@ -45,39 +54,33 @@ def run_browser():
         print("Chromium not found")
         return
 
-    print(f"Launching {browser} with Google...")
+    print(f"Launching {browser} with environment display...")
     
-    env = os.environ.copy()
-    if "DISPLAY" not in env:
-        env["DISPLAY"] = ":0"
-    
-    subprocess.Popen([
-        browser,
-        "--no-sandbox",
-        "--disable-gpu",
-        "--user-data-dir=/tmp/chromium-data",
-        "--disable-dev-shm-usage",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "https://www.google.com"
-    ], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-def run_novnc():
-    """Start noVNC/websockify to serve VNC over HTTP on port 5000"""
-    print("Starting noVNC on port 5000...")
-    time.sleep(1)
-    
-    subprocess.run([
-        "websockify",
-        "--web", "/tmp/novnc",
-        "0.0.0.0:5000",
-        "localhost:5900"
-    ])
+    while True:
+        try:
+            env = os.environ.copy()
+            # If we're in a Replit VNC environment, it usually provides :0
+            # If not, and we're seeing initialization errors, we check for available displays
+            if "DISPLAY" not in env:
+                env["DISPLAY"] = ":0"
+            
+            subprocess.run([
+                browser,
+                "--no-sandbox",
+                "--disable-gpu",
+                "--user-data-dir=/tmp/chromium-data",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "https://www.google.com"
+            ], env=env)
+        except Exception as e:
+            print(f"Browser error: {e}")
+        
+        print("Browser exited, restarting in 1s...")
+        time.sleep(1)
 
 if __name__ == "__main__":
     os.makedirs("/tmp/chromium-data", exist_ok=True)
-    
-    threading.Thread(target=run_x11vnc, daemon=True).start()
-    threading.Thread(target=run_browser, daemon=True).start()
-    
-    run_novnc()
+    threading.Thread(target=run_server, daemon=True).start()
+    run_browser()

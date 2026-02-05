@@ -4,7 +4,7 @@ modules = ["python-3.11"]
 
 [nix]
 channel = "stable-24_11"
-packages = ["chromium", "cowsay", "fluxbox", "novnc", "python311Packages.websockify", "ungoogled-chromium", "x11vnc", "xorg.xorgserver"]
+packages = ["cowsay", "ungoogled-chromium", "chromium", "xorg.xorgserver", "fluxbox", "x11vnc", "python311Packages.websockify", "novnc"]
 
 [agent]
 expertMode = true
@@ -26,12 +26,11 @@ name = "browser-startup"
 author = "agent"
 
 [workflows.workflow.metadata]
-outputType = "webview"
+outputType = "vnc"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "./startup"
-waitForPort = 5000
 
 [deployment]
 deploymentTarget = "vm"
