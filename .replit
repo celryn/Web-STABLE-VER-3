@@ -26,11 +26,12 @@ name = "browser-startup"
 author = "agent"
 
 [workflows.workflow.metadata]
-outputType = "vnc"
+outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "./startup"
+waitForPort = 5000
 
 [deployment]
 deploymentTarget = "vm"

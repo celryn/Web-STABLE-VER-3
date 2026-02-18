@@ -11,10 +11,13 @@ PORT = 5000
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
+        # Redirect all traffic to Google in an iframe, or just show a message
+        # Since we want it usable in "preview", we might need a proper web proxy 
+        # but for now let's just make it open a port and run the browser headfully
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"<html><body><h1>Browser is running</h1><p>Check the VNC tab to see the interface.</p></body></html>")
+        self.wfile.write(b"<html><body style='margin:0;padding:0;overflow:hidden;'><iframe src='https://www.google.com' style='width:100%;height:100%;border:none;'></iframe></body></html>")
 
 def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -54,16 +57,15 @@ def run_browser():
         print("Chromium not found")
         return
 
-    print(f"Launching {browser} with environment display...")
+    print(f"Launching {browser}...")
     
     while True:
         try:
-            env = os.environ.copy()
-            # If we're in a Replit VNC environment, it usually provides :0
-            # If not, and we're seeing initialization errors, we check for available displays
-            if "DISPLAY" not in env:
-                env["DISPLAY"] = ":0"
-            
+            # For "preview" (webview), we usually want headless or a specific platform
+            # but the user said "usable in the preview not vnc".
+            # This often implies they want a web-based interface.
+            # However, if they just want the browser to show up, 
+            # we'll keep it running.
             subprocess.run([
                 browser,
                 "--no-sandbox",
@@ -73,7 +75,7 @@ def run_browser():
                 "--no-first-run",
                 "--no-default-browser-check",
                 "https://www.google.com"
-            ], env=env)
+            ])
         except Exception as e:
             print(f"Browser error: {e}")
         
