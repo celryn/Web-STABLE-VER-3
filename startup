@@ -106,56 +106,59 @@ def setup_novnc_web():
   <title>Browser</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; background: #1a1a1a; font-family: system-ui, sans-serif; overflow: hidden; }
+    html, body { width: 100%; height: 100%; background: #111; font-family: system-ui, sans-serif; overflow: hidden; }
+
     #toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #111;
-      border-bottom: 1px solid #333;
-      padding: 0 12px;
-      height: 36px;
-      gap: 8px;
-      transition: opacity 0.3s;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #111; border-bottom: 1px solid #2a2a2a;
+      padding: 0 12px; height: 36px; gap: 8px;
     }
-    #toolbar.hidden { opacity: 0; pointer-events: none; }
     .toolbar-left { display: flex; align-items: center; gap: 8px; }
-    .title { color: #ccc; font-size: 13px; font-weight: 500; letter-spacing: 0.3px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; animation: pulse 2s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .title { color: #bbb; font-size: 13px; font-weight: 500; }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #555; transition: background 0.4s;
+    }
+    .status-dot.connected { background: #4ade80; animation: pulse 2.5s infinite; }
+    .status-dot.error     { background: #f87171; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
     .toolbar-right { display: flex; align-items: center; gap: 6px; }
     .btn {
       display: flex; align-items: center; gap: 5px;
-      background: #222; border: 1px solid #3a3a3a; color: #ccc;
+      background: #1e1e1e; border: 1px solid #333; color: #bbb;
       padding: 4px 10px; border-radius: 5px; font-size: 12px;
       cursor: pointer; transition: background 0.15s, color 0.15s;
       user-select: none;
     }
-    .btn:hover { background: #2e2e2e; color: #fff; border-color: #555; }
-    .btn svg { width: 13px; height: 13px; fill: currentColor; }
-    #vnc-frame {
-      display: block;
-      width: 100%;
-      height: calc(100% - 36px);
-      border: none;
+    .btn:hover { background: #2a2a2a; color: #fff; border-color: #555; }
+    .btn svg { width: 13px; height: 13px; fill: currentColor; flex-shrink: 0; }
+
+    #screen {
+      position: fixed;
+      top: 36px; left: 0; right: 0; bottom: 0;
+      overflow: hidden;
+      background: #000;
     }
+
     :fullscreen #toolbar { display: none; }
-    :fullscreen #vnc-frame { height: 100%; }
+    :fullscreen #screen  { top: 0; }
     :-webkit-full-screen #toolbar { display: none; }
-    :-webkit-full-screen #vnc-frame { height: 100%; }
-    #fs-hint {
-      position: fixed; bottom: 12px; right: 14px;
-      background: rgba(0,0,0,0.6); color: #aaa;
-      font-size: 11px; padding: 4px 9px; border-radius: 4px;
-      pointer-events: none; opacity: 0;
-      transition: opacity 0.4s;
+    :-webkit-full-screen #screen  { top: 0; }
+
+    #status-msg {
+      position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.65); color: #aaa; font-size: 11px;
+      padding: 4px 10px; border-radius: 4px; pointer-events: none;
+      opacity: 0; transition: opacity 0.3s;
     }
+    #status-msg.show { opacity: 1; }
   </style>
 </head>
 <body>
   <div id="toolbar">
     <div class="toolbar-left">
-      <div class="dot"></div>
+      <div class="status-dot" id="dot"></div>
       <span class="title">Virtual Browser</span>
     </div>
     <div class="toolbar-right">
@@ -165,45 +168,95 @@ def setup_novnc_web():
       </button>
     </div>
   </div>
-  <iframe id="vnc-frame" allow="fullscreen"
-    src="/vnc.html?autoconnect=1&reconnect=1&resize=scale&path=websockify&compression=2&quality=6&show_dot=false">
-  </iframe>
-  <div id="fs-hint">Press Esc to exit fullscreen</div>
-  <script>
-    const fsBtn = document.getElementById('fs-btn');
-    const hint  = document.getElementById('fs-hint');
 
-    function enterFullscreen() {
+  <div id="screen"></div>
+  <div id="status-msg"></div>
+
+  <script type="module">
+    import RFB from '/core/rfb.js';
+
+    const screen  = document.getElementById('screen');
+    const dot     = document.getElementById('dot');
+    const fsBtn   = document.getElementById('fs-btn');
+    const msg     = document.getElementById('status-msg');
+    let rfb       = null;
+    let retryTimer = null;
+
+    function showMsg(text, duration = 2500) {
+      msg.textContent = text;
+      msg.classList.add('show');
+      clearTimeout(showMsg._t);
+      showMsg._t = setTimeout(() => msg.classList.remove('show'), duration);
+    }
+
+    function connect() {
+      clearTimeout(retryTimer);
+      if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
+      screen.innerHTML = '';
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = proto + '//' + location.host + '/websockify';
+
+      rfb = new RFB(screen, wsUrl);
+      rfb.scaleViewport  = true;
+      rfb.resizeSession  = false;
+      rfb.viewOnly       = false;
+      rfb.qualityLevel   = 6;
+      rfb.compressionLevel = 2;
+
+      rfb.addEventListener('connect', () => {
+        dot.className = 'status-dot connected';
+        showMsg('Connected', 1500);
+        window.dispatchEvent(new Event('resize'));
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+      });
+      rfb.addEventListener('disconnect', (e) => {
+        dot.className = 'status-dot error';
+        showMsg('Reconnecting…', 3000);
+        retryTimer = setTimeout(connect, 2000);
+      });
+      rfb.addEventListener('credentialsrequired', () => {
+        rfb.sendCredentials({ password: '' });
+      });
+    }
+
+    connect();
+
+    const fsSupported = !!(document.documentElement.requestFullscreen ||
+                            document.documentElement.webkitRequestFullscreen ||
+                            document.documentElement.mozRequestFullScreen);
+
+    function enterFS() {
       const el = document.documentElement;
-      (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
+      const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+      if (fn) fn.call(el);
+      else { showMsg('Open in a new tab to use fullscreen', 3000); window.open(location.href, '_blank'); }
     }
-    function exitFullscreen() {
-      (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
+    function exitFS() {
+      const fn = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+      if (fn) fn.call(document);
     }
-    function isFullscreen() {
-      return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    function isFS() { return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement); }
+
+    if (!fsSupported) {
+      fsBtn.title = 'Open in new tab for fullscreen';
     }
 
-    fsBtn.addEventListener('click', () => {
-      isFullscreen() ? exitFullscreen() : enterFullscreen();
-    });
-
+    fsBtn.addEventListener('click', () => isFS() ? exitFS() : enterFS());
     document.addEventListener('keydown', e => {
-      if (e.key === 'F11') { e.preventDefault(); isFullscreen() ? exitFullscreen() : enterFullscreen(); }
-      if (e.key === 'Escape' && isFullscreen()) exitFullscreen();
+      if (e.key === 'F11') { e.preventDefault(); isFS() ? exitFS() : enterFS(); }
     });
 
-    document.addEventListener('fullscreenchange', updateBtn);
-    document.addEventListener('webkitfullscreenchange', updateBtn);
-    function updateBtn() {
-      if (isFullscreen()) {
+    function updateFsBtn() {
+      if (isFS()) {
         fsBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg> Exit Fullscreen';
-        hint.style.opacity = '1';
-        setTimeout(() => { hint.style.opacity = '0'; }, 2500);
+        showMsg('Press Esc to exit fullscreen', 2500);
       } else {
         fsBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg> Fullscreen';
       }
     }
+    document.addEventListener('fullscreenchange', updateFsBtn);
+    document.addEventListener('webkitfullscreenchange', updateFsBtn);
   </script>
 </body>
 </html>
@@ -275,6 +328,8 @@ def run_browser():
                 "--disk-cache-size=104857600",
                 "--memory-pressure-off",
                 "--max-tiles-for-interest-area=128",
+                "--disable-session-crashed-bubble",
+                "--restore-last-session=false",
                 "https://www.google.com"
             ], env=env)
         except Exception as e:
@@ -302,8 +357,6 @@ def run_x11vnc():
                 "-defer", "5",
                 "-wait", "5",
                 "-speeds", "modem",
-                "-ncache", "10",
-                "-ncache_cr",
             ])
         except Exception as e:
             print(f"x11vnc error: {e}")
@@ -333,11 +386,29 @@ def run_novnc(vnc_host):
             print(f"noVNC error: {e}")
         time.sleep(3)
 
+def reset_chromium_crash_flag():
+    prefs_dir = "/tmp/chromium-data/Default"
+    prefs_file = os.path.join(prefs_dir, "Preferences")
+    os.makedirs(prefs_dir, exist_ok=True)
+    if os.path.exists(prefs_file):
+        try:
+            import json
+            with open(prefs_file, "r") as f:
+                prefs = json.load(f)
+            prefs.setdefault("profile", {})
+            prefs["profile"]["exit_type"] = "Normal"
+            prefs["profile"]["exited_cleanly"] = True
+            with open(prefs_file, "w") as f:
+                json.dump(prefs, f)
+        except Exception:
+            pass
+
 if __name__ == "__main__":
     print("Cleaning up old processes...")
     kill_old_processes()
 
     os.makedirs("/tmp/chromium-data", exist_ok=True)
+    reset_chromium_crash_flag()
     setup_novnc_web()
 
     threading.Thread(target=run_xvfb, daemon=True).start()
