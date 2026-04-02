@@ -50,7 +50,9 @@ def kill_old_processes():
     subprocess.run(["pkill", "-9", "-f", "x11vnc"], capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "Xvfb"], capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "websockify"], capture_output=True)
-    time.sleep(1)
+    subprocess.run(["pkill", "-9", "-f", "chromium"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "ungoogled-chromium"], capture_output=True)
+    time.sleep(2)
     kill_port_users(VNC_PORT)
     kill_port_users(NOVNC_PORT)
     time.sleep(1)
@@ -189,6 +191,10 @@ def setup_novnc_web():
       showMsg._t = setTimeout(() => msg.classList.remove('show'), duration);
     }
 
+    function triggerResize() {
+      window.dispatchEvent(new Event('resize'));
+    }
+
     function connect() {
       clearTimeout(retryTimer);
       if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
@@ -198,8 +204,8 @@ def setup_novnc_web():
       const wsUrl = proto + '//' + location.host + '/websockify';
 
       rfb = new RFB(screen, wsUrl);
-      rfb.scaleViewport  = false;
-      rfb.resizeSession  = true;
+      rfb.scaleViewport  = true;
+      rfb.resizeSession  = false;
       rfb.viewOnly       = false;
       rfb.qualityLevel   = 9;
       rfb.compressionLevel = 2;
@@ -207,8 +213,9 @@ def setup_novnc_web():
       rfb.addEventListener('connect', () => {
         dot.className = 'status-dot connected';
         showMsg('Connected', 1500);
-        window.dispatchEvent(new Event('resize'));
-        setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+        triggerResize();
+        setTimeout(triggerResize, 300);
+        setTimeout(triggerResize, 1000);
       });
       rfb.addEventListener('disconnect', (e) => {
         dot.className = 'status-dot error';
@@ -221,6 +228,8 @@ def setup_novnc_web():
     }
 
     connect();
+
+    new ResizeObserver(() => { if (rfb) triggerResize(); }).observe(screen);
 
     const fsSupported = !!(document.documentElement.requestFullscreen ||
                             document.documentElement.webkitRequestFullscreen ||
@@ -268,7 +277,7 @@ def run_xvfb():
     print("Starting Xvfb...")
     subprocess.run([
         "Xvfb", DISPLAY,
-        "-screen", "0", "1280x800x24",
+        "-screen", "0", "1024x640x24",
         "-ac"
     ])
 
@@ -310,7 +319,7 @@ def run_browser():
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--window-size=1280,800",
+                "--window-size=1024,640",
                 "--start-maximized",
                 "--disable-extensions",
                 "--disable-background-networking",
@@ -329,12 +338,6 @@ def run_browser():
                 "--memory-pressure-off",
                 "--max-tiles-for-interest-area=512",
                 "--disable-session-crashed-bubble",
-                "--restore-last-session=false",
-                "--process-per-site",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--enable-features=NetworkService,NetworkServiceInProcess",
-                "--aggressive-cache-discard",
-                "--disable-smooth-scrolling",
                 "--force-device-scale-factor=1",
                 "https://www.google.com"
             ], env=env)
@@ -415,6 +418,16 @@ if __name__ == "__main__":
     kill_old_processes()
 
     os.makedirs("/tmp/chromium-data", exist_ok=True)
+    # Remove singleton lock so Chromium doesn't think a session is already running
+    for lock_file in [
+        "/tmp/chromium-data/SingletonLock",
+        "/tmp/chromium-data/SingletonSocket",
+        "/tmp/chromium-data/SingletonCookie",
+    ]:
+        try:
+            os.remove(lock_file)
+        except FileNotFoundError:
+            pass
     reset_chromium_crash_flag()
     setup_novnc_web()
 
