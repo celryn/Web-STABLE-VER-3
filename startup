@@ -47,14 +47,14 @@ def kill_port_users(port):
         print(f"Killed PIDs using port {port}: {pids_killed}")
 
 def kill_old_processes():
-    subprocess.run(["pkill", "-9", "-f", "x11vnc"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "Xvfb"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "websockify"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "chromium"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "ungoogled-chromium"], capture_output=True)
-    time.sleep(2)
+    for name in ["x11vnc", "Xvfb", "websockify", "chromium", "ungoogled-chromium"]:
+        subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
+    time.sleep(1)
     kill_port_users(VNC_PORT)
     kill_port_users(NOVNC_PORT)
+    # Second pass to catch any survivors
+    for name in ["websockify", "x11vnc"]:
+        subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
     time.sleep(1)
 
 def wait_for_vnc(port, timeout=30):
@@ -111,7 +111,7 @@ def setup_novnc_web():
     html, body { width: 100%; height: 100%; background: #111; font-family: system-ui, sans-serif; overflow: hidden; }
 
     #toolbar {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
       display: flex; align-items: center; justify-content: space-between;
       background: #111; border-bottom: 1px solid #2a2a2a;
       padding: 0 12px; height: 36px; gap: 8px;
@@ -143,8 +143,34 @@ def setup_novnc_web():
       background: #000;
     }
 
+    /* Settings panel */
+    #settings-panel {
+      position: fixed; top: 36px; right: 0; bottom: 0; z-index: 15;
+      width: 200px; background: #161616; border-left: 1px solid #2a2a2a;
+      padding: 14px 12px; display: flex; flex-direction: column; gap: 14px;
+      transform: translateX(100%); transition: transform 0.2s ease;
+      overflow-y: auto;
+    }
+    #settings-panel.open { transform: translateX(0); }
+    #settings-panel.open ~ #screen { right: 200px; }
+    .panel-title { color: #888; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .setting-row { display: flex; flex-direction: column; gap: 5px; }
+    .setting-label { display: flex; justify-content: space-between; color: #aaa; font-size: 12px; }
+    .setting-label span { color: #6ee7b7; font-weight: 600; }
+    input[type=range] {
+      width: 100%; accent-color: #4ade80; height: 4px; cursor: pointer;
+    }
+    .apply-btn {
+      background: #1a3a2a; border: 1px solid #2d5a3d; color: #4ade80;
+      padding: 7px; border-radius: 5px; font-size: 12px; cursor: pointer;
+      text-align: center; transition: background 0.15s;
+    }
+    .apply-btn:hover { background: #224d38; }
+    .divider { border: none; border-top: 1px solid #2a2a2a; margin: 0; }
+
     :fullscreen #toolbar { display: none; }
     :fullscreen #screen  { top: 0; }
+    :fullscreen #settings-panel { top: 0; }
     :-webkit-full-screen #toolbar { display: none; }
     :-webkit-full-screen #screen  { top: 0; }
 
@@ -152,7 +178,7 @@ def setup_novnc_web():
       position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
       background: rgba(0,0,0,0.65); color: #aaa; font-size: 11px;
       padding: 4px 10px; border-radius: 4px; pointer-events: none;
-      opacity: 0; transition: opacity 0.3s;
+      opacity: 0; transition: opacity 0.3s; z-index: 30;
     }
     #status-msg.show { opacity: 1; }
   </style>
@@ -164,10 +190,35 @@ def setup_novnc_web():
       <span class="title">Virtual Browser</span>
     </div>
     <div class="toolbar-right">
+      <button class="btn" id="settings-btn" title="Stream Settings">
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.02 7.02 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4a.484.484 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 8.87a.485.485 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.37 1.04.7 1.62.94l.36 2.54c.05.24.27.41.48.41h4c.22 0 .43-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
+        Settings
+      </button>
       <button class="btn" id="fs-btn" title="Fullscreen (F11)">
         <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
         Fullscreen
       </button>
+    </div>
+  </div>
+
+  <div id="settings-panel">
+    <div class="panel-title">Stream Quality</div>
+
+    <div class="setting-row">
+      <div class="setting-label">Quality <span id="q-val">9</span></div>
+      <input type="range" id="quality-slider" min="1" max="9" value="9">
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">Compression <span id="c-val">2</span></div>
+      <input type="range" id="compression-slider" min="0" max="9" value="2">
+    </div>
+
+    <button class="apply-btn" id="apply-btn">Apply</button>
+    <hr class="divider">
+    <div style="color:#666;font-size:11px;line-height:1.5">
+      Higher quality = sharper image, more bandwidth.<br><br>
+      Higher compression = less bandwidth, more CPU.
     </div>
   </div>
 
@@ -177,12 +228,19 @@ def setup_novnc_web():
   <script type="module">
     import RFB from '/core/rfb.js';
 
-    const screen  = document.getElementById('screen');
-    const dot     = document.getElementById('dot');
-    const fsBtn   = document.getElementById('fs-btn');
-    const msg     = document.getElementById('status-msg');
-    let rfb       = null;
-    let retryTimer = null;
+    const screen      = document.getElementById('screen');
+    const dot         = document.getElementById('dot');
+    const fsBtn       = document.getElementById('fs-btn');
+    const settingsBtn = document.getElementById('settings-btn');
+    const panel       = document.getElementById('settings-panel');
+    const msg         = document.getElementById('status-msg');
+    const qSlider     = document.getElementById('quality-slider');
+    const cSlider     = document.getElementById('compression-slider');
+    const qVal        = document.getElementById('q-val');
+    const cVal        = document.getElementById('c-val');
+    const applyBtn    = document.getElementById('apply-btn');
+    let rfb           = null;
+    let retryTimer    = null;
 
     function showMsg(text, duration = 2500) {
       msg.textContent = text;
@@ -216,11 +274,11 @@ def setup_novnc_web():
       const wsUrl = proto + '//' + location.host + '/websockify';
 
       rfb = new RFB(screen, wsUrl);
-      rfb.scaleViewport  = false;
-      rfb.resizeSession  = false;
-      rfb.viewOnly       = false;
-      rfb.qualityLevel   = 9;
-      rfb.compressionLevel = 2;
+      rfb.scaleViewport    = false;
+      rfb.resizeSession    = false;
+      rfb.viewOnly         = false;
+      rfb.qualityLevel     = parseInt(qSlider.value);
+      rfb.compressionLevel = parseInt(cSlider.value);
 
       rfb.addEventListener('connect', () => {
         dot.className = 'status-dot connected';
@@ -251,6 +309,22 @@ def setup_novnc_web():
 
     new ResizeObserver(scaleCanvas).observe(screen);
 
+    qSlider.addEventListener('input', () => { qVal.textContent = qSlider.value; });
+    cSlider.addEventListener('input', () => { cVal.textContent = cSlider.value; });
+
+    applyBtn.addEventListener('click', () => {
+      if (rfb) {
+        rfb.qualityLevel     = parseInt(qSlider.value);
+        rfb.compressionLevel = parseInt(cSlider.value);
+      }
+      showMsg('Settings applied', 1500);
+    });
+
+    settingsBtn.addEventListener('click', () => {
+      panel.classList.toggle('open');
+      setTimeout(scaleCanvas, 220);
+    });
+
     const fsSupported = !!(document.documentElement.requestFullscreen ||
                             document.documentElement.webkitRequestFullscreen ||
                             document.documentElement.mozRequestFullScreen);
@@ -267,10 +341,6 @@ def setup_novnc_web():
     }
     function isFS() { return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement); }
 
-    if (!fsSupported) {
-      fsBtn.title = 'Open in new tab for fullscreen';
-    }
-
     fsBtn.addEventListener('click', () => isFS() ? exitFS() : enterFS());
     document.addEventListener('keydown', e => {
       if (e.key === 'F11') { e.preventDefault(); isFS() ? exitFS() : enterFS(); }
@@ -278,7 +348,7 @@ def setup_novnc_web():
 
     function updateFsBtn() {
       if (isFS()) {
-        fsBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg> Exit Fullscreen';
+        fsBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg> Exit';
         showMsg('Press Esc to exit fullscreen', 2500);
       } else {
         fsBtn.innerHTML = '<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg> Fullscreen';
@@ -350,7 +420,6 @@ def run_browser():
                 "--disable-default-apps",
                 "--disable-client-side-phishing-detection",
                 "--disable-features=TranslateUI,Translate",
-                "--disable-ipc-flooding-protection",
                 "--disable-renderer-backgrounding",
                 "--disable-backgrounding-occluded-windows",
                 "--metrics-recording-only",
