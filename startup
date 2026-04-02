@@ -141,9 +141,6 @@ def setup_novnc_web():
       top: 36px; left: 0; right: 0; bottom: 0;
       overflow: hidden;
       background: #000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
 
     :fullscreen #toolbar { display: none; }
@@ -194,8 +191,20 @@ def setup_novnc_web():
       showMsg._t = setTimeout(() => msg.classList.remove('show'), duration);
     }
 
-    function triggerResize() {
-      window.dispatchEvent(new Event('resize'));
+    function scaleCanvas() {
+      const canvas = screen.querySelector('canvas');
+      if (!canvas) return;
+      const sw = screen.clientWidth;
+      const sh = screen.clientHeight;
+      const cw = canvas.width;
+      const ch = canvas.height;
+      if (!sw || !sh || !cw || !ch) return;
+      const scale = Math.min(sw / cw, sh / ch);
+      canvas.style.position = 'absolute';
+      canvas.style.top = '50%';
+      canvas.style.left = '50%';
+      canvas.style.transformOrigin = 'center center';
+      canvas.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
     }
 
     function connect() {
@@ -216,11 +225,11 @@ def setup_novnc_web():
       rfb.addEventListener('connect', () => {
         dot.className = 'status-dot connected';
         showMsg('Connected', 1500);
-        triggerResize();
-        setTimeout(triggerResize, 300);
-        setTimeout(triggerResize, 1000);
+        scaleCanvas();
+        setTimeout(scaleCanvas, 300);
+        setTimeout(scaleCanvas, 800);
       });
-      rfb.addEventListener('disconnect', (e) => {
+      rfb.addEventListener('disconnect', () => {
         dot.className = 'status-dot error';
         showMsg('Reconnecting…', 3000);
         retryTimer = setTimeout(connect, 2000);
@@ -232,7 +241,15 @@ def setup_novnc_web():
 
     connect();
 
-    new ResizeObserver(() => { if (rfb) triggerResize(); }).observe(screen);
+    new MutationObserver(() => {
+      const canvas = screen.querySelector('canvas');
+      if (canvas) {
+        scaleCanvas();
+        new ResizeObserver(scaleCanvas).observe(canvas);
+      }
+    }).observe(screen, { childList: true, subtree: true });
+
+    new ResizeObserver(scaleCanvas).observe(screen);
 
     const fsSupported = !!(document.documentElement.requestFullscreen ||
                             document.documentElement.webkitRequestFullscreen ||
@@ -280,7 +297,7 @@ def run_xvfb():
     print("Starting Xvfb...")
     subprocess.run([
         "Xvfb", DISPLAY,
-        "-screen", "0", "680x460x24",
+        "-screen", "0", "900x600x24",
         "-ac"
     ])
 
@@ -322,7 +339,7 @@ def run_browser():
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--window-size=680,460",
+                "--window-size=900,600",
                 "--start-maximized",
                 "--disable-extensions",
                 "--disable-background-networking",
