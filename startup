@@ -198,10 +198,10 @@ def setup_novnc_web():
       const wsUrl = proto + '//' + location.host + '/websockify';
 
       rfb = new RFB(screen, wsUrl);
-      rfb.scaleViewport  = true;
-      rfb.resizeSession  = false;
+      rfb.scaleViewport  = false;
+      rfb.resizeSession  = true;
       rfb.viewOnly       = false;
-      rfb.qualityLevel   = 6;
+      rfb.qualityLevel   = 9;
       rfb.compressionLevel = 2;
 
       rfb.addEventListener('connect', () => {
@@ -327,9 +327,15 @@ def run_browser():
                 "--metrics-recording-only",
                 "--disk-cache-size=104857600",
                 "--memory-pressure-off",
-                "--max-tiles-for-interest-area=128",
+                "--max-tiles-for-interest-area=512",
                 "--disable-session-crashed-bubble",
                 "--restore-last-session=false",
+                "--process-per-site",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--enable-features=NetworkService,NetworkServiceInProcess",
+                "--aggressive-cache-discard",
+                "--disable-smooth-scrolling",
+                "--force-device-scale-factor=1",
                 "https://www.google.com"
             ], env=env)
         except Exception as e:
@@ -352,11 +358,12 @@ def run_x11vnc():
                 "-forever",
                 "-shared",
                 "-quiet",
-                "-noxdamage",
+                "-xdamage",
                 "-threads",
-                "-defer", "5",
-                "-wait", "5",
-                "-speeds", "modem",
+                "-defer", "10",
+                "-wait", "10",
+                "-ncache", "10",
+                "-ncache_cr",
             ])
         except Exception as e:
             print(f"x11vnc error: {e}")
