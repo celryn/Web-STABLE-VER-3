@@ -141,6 +141,9 @@ def setup_novnc_web():
       top: 36px; left: 0; right: 0; bottom: 0;
       overflow: hidden;
       background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     :fullscreen #toolbar { display: none; }
@@ -204,7 +207,7 @@ def setup_novnc_web():
       const wsUrl = proto + '//' + location.host + '/websockify';
 
       rfb = new RFB(screen, wsUrl);
-      rfb.scaleViewport  = true;
+      rfb.scaleViewport  = false;
       rfb.resizeSession  = false;
       rfb.viewOnly       = false;
       rfb.qualityLevel   = 9;
@@ -277,7 +280,7 @@ def run_xvfb():
     print("Starting Xvfb...")
     subprocess.run([
         "Xvfb", DISPLAY,
-        "-screen", "0", "1024x640x24",
+        "-screen", "0", "680x460x24",
         "-ac"
     ])
 
@@ -319,7 +322,7 @@ def run_browser():
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--window-size=1024,640",
+                "--window-size=680,460",
                 "--start-maximized",
                 "--disable-extensions",
                 "--disable-background-networking",
@@ -363,10 +366,8 @@ def run_x11vnc():
                 "-quiet",
                 "-xdamage",
                 "-threads",
-                "-defer", "10",
-                "-wait", "10",
-                "-ncache", "10",
-                "-ncache_cr",
+                "-defer", "5",
+                "-wait", "5",
             ])
         except Exception as e:
             print(f"x11vnc error: {e}")
