@@ -6,6 +6,7 @@ import threading
 import time
 import socket
 import shutil
+import struct
 
 DISPLAY = ":99"
 VNC_PORT = 5900
@@ -13,8 +14,49 @@ NOVNC_PORT = 5000
 NOVNC_SRC = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/webapps/novnc"
 NOVNC_WEB = "/tmp/novnc-web"
 
+def kill_port_users(port):
+    """Kill any process listening on the given port via /proc/net/tcp*."""
+    hex_port = format(port, 'X').zfill(4)
+    pids_killed = set()
+    for proto in ['tcp', 'tcp6']:
+        try:
+            with open(f'/proc/net/{proto}') as f:
+                for line in f.readlines()[1:]:
+                    parts = line.split()
+                    if len(parts) < 4:
+                        continue
+                    local = parts[1]
+                    local_port = local.split(':')[1]
+                    if local_port.upper() == hex_port:
+                        inode = parts[9]
+                        for pid in os.listdir('/proc'):
+                            if not pid.isdigit() or pid in pids_killed:
+                                continue
+                            try:
+                                fd_dir = f'/proc/{pid}/fd'
+                                for fd in os.listdir(fd_dir):
+                                    link = os.readlink(f'{fd_dir}/{fd}')
+                                    if f'socket:[{inode}]' in link:
+                                        os.kill(int(pid), 9)
+                                        pids_killed.add(pid)
+                            except (PermissionError, FileNotFoundError, ProcessLookupError):
+                                pass
+        except FileNotFoundError:
+            pass
+    if pids_killed:
+        print(f"Killed PIDs using port {port}: {pids_killed}")
+
+def kill_old_processes():
+    subprocess.run(["pkill", "-9", "-f", "x11vnc"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "Xvfb"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "websockify"], capture_output=True)
+    time.sleep(1)
+    kill_port_users(VNC_PORT)
+    kill_port_users(NOVNC_PORT)
+    time.sleep(1)
+
 def wait_for_vnc(port, timeout=30):
-    """Wait for VNC port, verifying the RFB protocol handshake. Return the address that works."""
+    """Wait for VNC, verifying the RFB handshake. Returns the working address."""
     start = time.time()
     while time.time() - start < timeout:
         for host in ["127.0.0.1", "::1"]:
@@ -26,29 +68,12 @@ def wait_for_vnc(port, timeout=30):
                 data = s.recv(12)
                 s.close()
                 if data.startswith(b"RFB"):
-                    print(f"VNC RFB handshake confirmed on {host}:{port}")
+                    print(f"VNC confirmed on {host}:{port}")
                     return host
             except OSError:
                 pass
         time.sleep(0.5)
     return "::1"
-
-def kill_old_processes():
-    subprocess.run(["pkill", "-9", "-f", "x11vnc"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "Xvfb"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "websockify"], capture_output=True)
-    try:
-        ss_out = subprocess.run(
-            ["ss", "-tlnp"],
-            capture_output=True, text=True
-        ).stdout
-        for line in ss_out.splitlines():
-            if f":{VNC_PORT}" in line:
-                for pid in re.findall(r'pid=(\d+)', line):
-                    subprocess.run(["kill", "-9", pid], capture_output=True)
-    except Exception:
-        pass
-    time.sleep(2)
 
 def _force_remove(func, path, exc):
     parent = os.path.dirname(path)
@@ -141,8 +166,10 @@ def run_browser():
             ], env=env)
         except Exception as e:
             print(f"Browser error: {e}")
-        print("Browser exited, restarting in 1s...")
-        time.sleep(1)
+            time.sleep(2)
+        else:
+            print("Browser exited, restarting in 2s...")
+            time.sleep(2)
 
 def run_x11vnc():
     print("Starting x11vnc...")
@@ -160,14 +187,16 @@ def run_x11vnc():
             ])
         except Exception as e:
             print(f"x11vnc error: {e}")
-        time.sleep(1)
+            time.sleep(2)
+        else:
+            time.sleep(1)
 
 def run_novnc(vnc_host):
-    print(f"Starting noVNC on port {NOVNC_PORT}, connecting to [{vnc_host}]:{VNC_PORT}...")
     if ":" in vnc_host:
         target = f"[{vnc_host}]:{VNC_PORT}"
     else:
         target = f"{vnc_host}:{VNC_PORT}"
+    print(f"Starting noVNC on :{NOVNC_PORT} -> {target}")
     while True:
         try:
             subprocess.run([
@@ -178,9 +207,10 @@ def run_novnc(vnc_host):
             ])
         except Exception as e:
             print(f"noVNC error: {e}")
-        time.sleep(1)
+        time.sleep(3)
 
 if __name__ == "__main__":
+    print("Cleaning up old processes...")
     kill_old_processes()
 
     os.makedirs("/tmp/chromium-data", exist_ok=True)
@@ -194,6 +224,6 @@ if __name__ == "__main__":
 
     print("Waiting for VNC server...")
     vnc_host = wait_for_vnc(VNC_PORT, timeout=30)
-    print(f"VNC available on {vnc_host}:{VNC_PORT}")
+    print(f"VNC ready at {vnc_host}:{VNC_PORT}")
 
     run_novnc(vnc_host)
