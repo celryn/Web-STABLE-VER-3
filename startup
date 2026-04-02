@@ -1,40 +1,101 @@
 #!/usr/bin/env python3
-import http.server
-import socketserver
 import os
+import re
 import subprocess
 import threading
 import time
 import socket
+import shutil
 
-PORT = 5000
+DISPLAY = ":99"
+VNC_PORT = 5900
+NOVNC_PORT = 5000
+NOVNC_SRC = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/webapps/novnc"
+NOVNC_WEB = "/tmp/novnc-web"
 
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        # Redirect all traffic to Google in an iframe, or just show a message
-        # Since we want it usable in "preview", we might need a proper web proxy 
-        # but for now let's just make it open a port and run the browser headfully
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"<html><body style='margin:0;padding:0;overflow:hidden;'><iframe src='https://www.google.com' style='width:100%;height:100%;border:none;'></iframe></body></html>")
+def wait_for_vnc(port, timeout=30):
+    """Wait for VNC port, verifying the RFB protocol handshake. Return the address that works."""
+    start = time.time()
+    while time.time() - start < timeout:
+        for host in ["127.0.0.1", "::1"]:
+            try:
+                af = socket.AF_INET6 if ":" in host else socket.AF_INET
+                s = socket.socket(af, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect((host, port))
+                data = s.recv(12)
+                s.close()
+                if data.startswith(b"RFB"):
+                    print(f"VNC RFB handshake confirmed on {host}:{port}")
+                    return host
+            except OSError:
+                pass
+        time.sleep(0.5)
+    return "::1"
 
-def is_port_in_use(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) == 0
-
-def run_server():
-    if is_port_in_use(PORT):
-        print(f"Port {PORT} already in use, skipping HTTP server startup.")
-        return
-    
-    socketserver.TCPServer.allow_reuse_address = True
+def kill_old_processes():
+    subprocess.run(["pkill", "-9", "-f", "x11vnc"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "Xvfb"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "websockify"], capture_output=True)
     try:
-        with socketserver.TCPServer(("", PORT), Handler) as httpd:
-            print(f"Serving at port {PORT}")
-            httpd.serve_forever()
-    except Exception as e:
-        print(f"Failed to start HTTP server: {e}")
+        ss_out = subprocess.run(
+            ["ss", "-tlnp"],
+            capture_output=True, text=True
+        ).stdout
+        for line in ss_out.splitlines():
+            if f":{VNC_PORT}" in line:
+                for pid in re.findall(r'pid=(\d+)', line):
+                    subprocess.run(["kill", "-9", pid], capture_output=True)
+    except Exception:
+        pass
+    time.sleep(2)
+
+def _force_remove(func, path, exc):
+    parent = os.path.dirname(path)
+    try:
+        os.chmod(parent, 0o755)
+    except Exception:
+        pass
+    try:
+        os.chmod(path, 0o755)
+    except Exception:
+        pass
+    func(path)
+
+def setup_novnc_web():
+    if os.path.exists(NOVNC_WEB):
+        subprocess.run(["chmod", "-R", "u+w", NOVNC_WEB], capture_output=True)
+        shutil.rmtree(NOVNC_WEB, onerror=_force_remove)
+    shutil.copytree(NOVNC_SRC, NOVNC_WEB)
+    os.chmod(NOVNC_WEB, 0o755)
+    for root, dirs, files in os.walk(NOVNC_WEB):
+        for d in dirs:
+            os.chmod(os.path.join(root, d), 0o755)
+        for f in files:
+            os.chmod(os.path.join(root, f), 0o644)
+    index = """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Browser</title>
+</head>
+<body>
+  <script>
+    window.location.replace('/vnc.html?autoconnect=1&reconnect=1&resize=scale&path=websockify');
+  </script>
+</body>
+</html>
+"""
+    with open(os.path.join(NOVNC_WEB, "index.html"), "w") as f:
+        f.write(index)
+
+def run_xvfb():
+    print("Starting Xvfb...")
+    subprocess.run([
+        "Xvfb", DISPLAY,
+        "-screen", "0", "1280x800x24",
+        "-ac"
+    ])
 
 def run_browser():
     browser = None
@@ -45,12 +106,15 @@ def run_browser():
             break
         except subprocess.CalledProcessError:
             continue
-    
+
     if not browser:
         try:
-            res = subprocess.run("find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1", shell=True, capture_output=True, text=True)
+            res = subprocess.run(
+                "find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1",
+                shell=True, capture_output=True, text=True
+            )
             browser = res.stdout.strip()
-        except:
+        except Exception:
             pass
 
     if not browser:
@@ -58,14 +122,11 @@ def run_browser():
         return
 
     print(f"Launching {browser}...")
-    
+    env = os.environ.copy()
+    env["DISPLAY"] = DISPLAY
+
     while True:
         try:
-            # For "preview" (webview), we usually want headless or a specific platform
-            # but the user said "usable in the preview not vnc".
-            # This often implies they want a web-based interface.
-            # However, if they just want the browser to show up, 
-            # we'll keep it running.
             subprocess.run([
                 browser,
                 "--no-sandbox",
@@ -74,15 +135,65 @@ def run_browser():
                 "--disable-dev-shm-usage",
                 "--no-first-run",
                 "--no-default-browser-check",
+                "--window-size=1280,800",
+                "--start-maximized",
                 "https://www.google.com"
-            ])
+            ], env=env)
         except Exception as e:
             print(f"Browser error: {e}")
-        
         print("Browser exited, restarting in 1s...")
         time.sleep(1)
 
+def run_x11vnc():
+    print("Starting x11vnc...")
+    time.sleep(3)
+    while True:
+        try:
+            subprocess.run([
+                "x11vnc",
+                "-display", DISPLAY,
+                "-nopw",
+                "-rfbport", str(VNC_PORT),
+                "-forever",
+                "-shared",
+                "-quiet"
+            ])
+        except Exception as e:
+            print(f"x11vnc error: {e}")
+        time.sleep(1)
+
+def run_novnc(vnc_host):
+    print(f"Starting noVNC on port {NOVNC_PORT}, connecting to [{vnc_host}]:{VNC_PORT}...")
+    if ":" in vnc_host:
+        target = f"[{vnc_host}]:{VNC_PORT}"
+    else:
+        target = f"{vnc_host}:{VNC_PORT}"
+    while True:
+        try:
+            subprocess.run([
+                "websockify",
+                "--web", NOVNC_WEB,
+                str(NOVNC_PORT),
+                target
+            ])
+        except Exception as e:
+            print(f"noVNC error: {e}")
+        time.sleep(1)
+
 if __name__ == "__main__":
+    kill_old_processes()
+
     os.makedirs("/tmp/chromium-data", exist_ok=True)
-    threading.Thread(target=run_server, daemon=True).start()
-    run_browser()
+    setup_novnc_web()
+
+    threading.Thread(target=run_xvfb, daemon=True).start()
+    time.sleep(1)
+
+    threading.Thread(target=run_browser, daemon=True).start()
+    threading.Thread(target=run_x11vnc, daemon=True).start()
+
+    print("Waiting for VNC server...")
+    vnc_host = wait_for_vnc(VNC_PORT, timeout=30)
+    print(f"VNC available on {vnc_host}:{VNC_PORT}")
+
+    run_novnc(vnc_host)
