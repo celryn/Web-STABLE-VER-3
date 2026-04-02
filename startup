@@ -106,7 +106,7 @@ def setup_novnc_web():
 </head>
 <body>
   <script>
-    window.location.replace('/vnc.html?autoconnect=1&reconnect=1&resize=scale&path=websockify');
+    window.location.replace('/vnc.html?autoconnect=1&reconnect=1&resize=scale&path=websockify&compression=2&quality=6');
   </script>
 </body>
 </html>
@@ -162,6 +162,22 @@ def run_browser():
                 "--no-default-browser-check",
                 "--window-size=1280,800",
                 "--start-maximized",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--disable-hang-monitor",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-client-side-phishing-detection",
+                "--disable-features=TranslateUI,Translate",
+                "--disable-ipc-flooding-protection",
+                "--disable-renderer-backgrounding",
+                "--disable-backgrounding-occluded-windows",
+                "--metrics-recording-only",
+                "--disk-cache-size=104857600",
+                "--memory-pressure-off",
+                "--max-tiles-for-interest-area=128",
                 "https://www.google.com"
             ], env=env)
         except Exception as e:
@@ -183,7 +199,12 @@ def run_x11vnc():
                 "-rfbport", str(VNC_PORT),
                 "-forever",
                 "-shared",
-                "-quiet"
+                "-quiet",
+                "-noxdamage",
+                "-threads",
+                "-defer", "5",
+                "-wait", "5",
+                "-speeds", "modem",
             ])
         except Exception as e:
             print(f"x11vnc error: {e}")
@@ -197,6 +218,10 @@ def run_novnc(vnc_host):
     else:
         target = f"{vnc_host}:{VNC_PORT}"
     print(f"Starting noVNC on :{NOVNC_PORT} -> {target}")
+    env = os.environ.copy()
+    numpy_path = "/nix/store/12nkx5irbnfdh06frm3sxs7drdw9ah4r-python3.11-numpy-1.26.4/lib/python3.11/site-packages"
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{numpy_path}:{existing}" if existing else numpy_path
     while True:
         try:
             subprocess.run([
@@ -204,7 +229,7 @@ def run_novnc(vnc_host):
                 "--web", NOVNC_WEB,
                 str(NOVNC_PORT),
                 target
-            ])
+            ], env=env)
         except Exception as e:
             print(f"noVNC error: {e}")
         time.sleep(3)
