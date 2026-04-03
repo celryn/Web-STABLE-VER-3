@@ -49,6 +49,9 @@ NOVNC_WEB = "/tmp/novnc-web"
 # In-memory session store: token -> username
 _sessions = {}
 
+# Signal used to stop the browser restart loop before launching a new one
+_browser_stop_event = threading.Event()
+
 def kill_port_users(port):
     """Kill any process listening on the given port via /proc/net/tcp*."""
     hex_port = format(port, 'X').zfill(4)
@@ -581,9 +584,9 @@ def run_browser():
     env = os.environ.copy()
     env["DISPLAY"] = DISPLAY
 
-    while True:
+    while not _browser_stop_event.is_set():
         try:
-            subprocess.run([
+            proc = subprocess.Popen([
                 browser,
                 "--no-sandbox",
                 "--disable-gpu",
@@ -616,12 +619,13 @@ def run_browser():
                 "--enable-features=NetworkService,NetworkServiceInProcess",
                 "https://www.google.com"
             ], env=env)
+            proc.wait()
         except Exception as e:
             print(f"Browser error: {e}")
-            time.sleep(2)
-        else:
-            print("Browser exited, restarting in 2s...")
-            time.sleep(2)
+        if _browser_stop_event.is_set():
+            break
+        print("Browser exited, restarting in 2s...")
+        time.sleep(2)
 
 def run_x11vnc():
     print("Starting x11vnc...")
@@ -673,10 +677,14 @@ def run_novnc(vnc_host):
 
 def _restart_browser_stack():
     """Kill and restart VNC/Xvfb/Chromium without touching the HTTP server."""
+    global _browser_stop_event
     print("Restarting browser stack...")
+    # Signal any running browser loop to stop before we kill the process,
+    # so the old thread won't try to relaunch Chromium after we kill it.
+    _browser_stop_event.set()
     for name in ["x11vnc", "Xvfb", "chromium", "ungoogled-chromium"]:
         subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
-    time.sleep(1)
+    time.sleep(2)  # Give old threads time to notice the stop event and exit
     for lock_file in [
         "/tmp/chromium-data/SingletonLock",
         "/tmp/chromium-data/SingletonSocket",
@@ -687,6 +695,8 @@ def _restart_browser_stack():
         except FileNotFoundError:
             pass
     reset_chromium_crash_flag()
+    # Clear the stop event so the new browser thread runs normally
+    _browser_stop_event.clear()
     threading.Thread(target=run_xvfb, daemon=True).start()
     time.sleep(1)
     threading.Thread(target=run_browser, daemon=True).start()
