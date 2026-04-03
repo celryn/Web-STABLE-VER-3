@@ -254,16 +254,13 @@ def setup_novnc_web():
       if (!canvas) return;
       const sw = screen.clientWidth;
       const sh = screen.clientHeight;
-      const cw = canvas.width;
-      const ch = canvas.height;
-      if (!sw || !sh || !cw || !ch) return;
-      const scaleX = sw / cw;
-      const scaleY = sh / ch;
+      if (!sw || !sh) return;
       canvas.style.position = 'absolute';
       canvas.style.top = '0';
       canvas.style.left = '0';
-      canvas.style.transformOrigin = 'top left';
-      canvas.style.transform = 'scaleX(' + scaleX + ') scaleY(' + scaleY + ')';
+      canvas.style.width = sw + 'px';
+      canvas.style.height = sh + 'px';
+      canvas.style.transform = 'none';
     }
 
     function connect() {
@@ -411,8 +408,9 @@ def run_browser():
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--start-maximized",
+                "--window-position=0,0",
+                "--window-size=1200,800",
                 "--disable-extensions",
-                "--disable-background-networking",
                 "--disable-sync",
                 "--disable-translate",
                 "--disable-hang-monitor",
@@ -422,12 +420,16 @@ def run_browser():
                 "--disable-features=TranslateUI,Translate",
                 "--disable-renderer-backgrounding",
                 "--disable-backgrounding-occluded-windows",
+                "--disable-background-timer-throttling",
+                "--autoplay-policy=no-user-gesture-required",
+                "--allow-running-insecure-content",
                 "--metrics-recording-only",
                 "--disk-cache-size=104857600",
                 "--memory-pressure-off",
                 "--max-tiles-for-interest-area=512",
                 "--disable-session-crashed-bubble",
                 "--force-device-scale-factor=1",
+                "--enable-features=NetworkService,NetworkServiceInProcess",
                 "https://www.google.com"
             ], env=env)
         except Exception as e:
