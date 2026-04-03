@@ -784,7 +784,6 @@ def setup_novnc_web():
 
     const devicesModal      = document.getElementById('devices-modal');
     const devicesBody       = document.getElementById('devices-body');
-    const devicesBtn        = document.getElementById('devices-btn');
     const devicesCloseBtn   = document.getElementById('devices-close');
     const devicesRefreshBtn = document.getElementById('devices-refresh-btn');
 
@@ -848,7 +847,6 @@ def setup_novnc_web():
       }
     }
 
-    devicesBtn.addEventListener('click', () => { devicesModal.classList.remove('hidden'); loadDevices(); });
     devicesCloseBtn.addEventListener('click', () => devicesModal.classList.add('hidden'));
     devicesRefreshBtn.addEventListener('click', loadDevices);
     devicesModal.addEventListener('click', e => { if (e.target === devicesModal) devicesModal.classList.add('hidden'); });
