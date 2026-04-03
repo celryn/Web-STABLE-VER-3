@@ -52,6 +52,17 @@ _sessions = {}
 # Signal used to stop the browser restart loop before launching a new one
 _browser_stop_event = threading.Event()
 
+# ── Admin password ─────────────────────────────────────────────────────────────
+_ADMIN_PASS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AD Pass")
+
+def _get_admin_pass():
+    """Read admin password from the 'AD Pass' file (one line, plain text)."""
+    try:
+        with open(_ADMIN_PASS_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return "admin123"
+
 # ── Device tracking ────────────────────────────────────────────────────────────
 _DEVICES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "devices.json")
 _devices_lock = threading.Lock()
@@ -275,6 +286,45 @@ def setup_novnc_web():
     .apply-btn:hover { background: #224d38; }
     .divider { border: none; border-top: 1px solid #2a2a2a; margin: 0; }
 
+    /* ── Admin modal ── */
+    #admin-modal {
+      position: fixed; inset: 0; z-index: 110;
+      background: rgba(0,0,0,0.65);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #admin-modal.hidden { display: none; }
+    .admin-box {
+      background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px;
+      width: 360px; max-width: 95vw;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .admin-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid #2a2a2a;
+    }
+    .admin-title { color: #ddd; font-size: 14px; font-weight: 600; }
+    .admin-close {
+      background: none; border: none; color: #888; cursor: pointer;
+      font-size: 18px; line-height: 1; padding: 0 4px;
+    }
+    .admin-close:hover { color: #fff; }
+    .admin-body { padding: 20px 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+    .admin-label { color: #aaa; font-size: 12px; margin-bottom: -6px; }
+    .admin-input {
+      background: #111; border: 1px solid #333; color: #eee;
+      padding: 10px 13px; border-radius: 7px; font-size: 14px; width: 100%;
+      outline: none; transition: border-color 0.15s;
+    }
+    .admin-input:focus { border-color: #4ade80; }
+    .admin-error { color: #f87171; font-size: 12px; min-height: 16px; }
+    .admin-submit {
+      background: #1a3a2a; border: 1px solid #2d5a3d; color: #4ade80;
+      padding: 10px; border-radius: 7px; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background 0.15s; width: 100%;
+    }
+    .admin-submit:hover:not(:disabled) { background: #224d38; }
+    .admin-submit:disabled { opacity: 0.5; cursor: default; }
+
     /* ── Devices modal ── */
     #devices-modal {
       position: fixed; inset: 0; z-index: 100;
@@ -379,6 +429,22 @@ def setup_novnc_web():
     </div>
   </div>
 
+  <!-- Admin modal -->
+  <div id="admin-modal" class="hidden">
+    <div class="admin-box">
+      <div class="admin-header">
+        <span class="admin-title">Admin Access</span>
+        <button class="admin-close" id="admin-close">&#x2715;</button>
+      </div>
+      <div class="admin-body">
+        <div class="admin-label">Enter admin password</div>
+        <input class="admin-input" id="admin-pass-input" type="password" placeholder="Password" autocomplete="off">
+        <div class="admin-error" id="admin-error"></div>
+        <button class="admin-submit" id="admin-submit">Unlock</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Devices modal -->
   <div id="devices-modal" class="hidden">
     <div class="devices-box">
@@ -411,6 +477,10 @@ def setup_novnc_web():
       <button class="btn danger" id="restart-btn" title="Restart the browser session">
         <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
         Restart
+      </button>
+      <button class="btn" id="admin-btn" title="Admin Panel">
+        <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.5-2.33 6.79-5 7.93-2.67-1.14-5-4.43-5-7.93V7.18L12 5z"/></svg>
+        Admin
       </button>
       <button class="btn" id="devices-btn" title="Device Tracker">
         <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
@@ -732,6 +802,58 @@ def setup_novnc_web():
     devicesRefreshBtn.addEventListener('click', loadDevices);
     devicesModal.addEventListener('click', e => { if (e.target === devicesModal) devicesModal.classList.add('hidden'); });
 
+    // ── Admin panel ──────────────────────────────────────────────────────────────
+
+    const adminModal      = document.getElementById('admin-modal');
+    const adminBtn        = document.getElementById('admin-btn');
+    const adminCloseBtn   = document.getElementById('admin-close');
+    const adminPassInput  = document.getElementById('admin-pass-input');
+    const adminSubmitBtn  = document.getElementById('admin-submit');
+    const adminError      = document.getElementById('admin-error');
+
+    function openAdminModal() {
+      adminPassInput.value = '';
+      adminError.textContent = '';
+      adminSubmitBtn.disabled = false;
+      adminSubmitBtn.textContent = 'Unlock';
+      adminModal.classList.remove('hidden');
+      setTimeout(() => adminPassInput.focus(), 80);
+    }
+
+    async function submitAdminPassword() {
+      adminError.textContent = '';
+      adminSubmitBtn.disabled = true;
+      adminSubmitBtn.textContent = 'Checking\u2026';
+      try {
+        const res = await fetch('/api/admin/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Auth-Token': getToken() },
+          body: JSON.stringify({ password: adminPassInput.value })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          adminModal.classList.add('hidden');
+          devicesModal.classList.remove('hidden');
+          loadDevices();
+        } else {
+          adminError.textContent = data.error || 'Wrong password';
+          adminSubmitBtn.disabled = false;
+          adminSubmitBtn.textContent = 'Unlock';
+          adminPassInput.select();
+        }
+      } catch(e) {
+        adminError.textContent = 'Server unreachable';
+        adminSubmitBtn.disabled = false;
+        adminSubmitBtn.textContent = 'Unlock';
+      }
+    }
+
+    adminBtn.addEventListener('click', openAdminModal);
+    adminCloseBtn.addEventListener('click', () => adminModal.classList.add('hidden'));
+    adminModal.addEventListener('click', e => { if (e.target === adminModal) adminModal.classList.add('hidden'); });
+    adminSubmitBtn.addEventListener('click', submitAdminPassword);
+    adminPassInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitAdminPassword(); });
+
     function enterFS() {
       const el = document.documentElement;
       const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
@@ -978,6 +1100,21 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._send_json(200, {'ok': True})
             threading.Thread(target=_restart_browser_stack, daemon=True).start()
+
+        elif self.path == '/api/admin/auth':
+            if self._auth_token() not in _sessions:
+                self._send_json(403, {'error': 'Unauthorized'})
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            try:
+                body = _json.loads(self.rfile.read(length))
+            except Exception:
+                self._send_json(400, {'error': 'Bad request'})
+                return
+            if body.get('password', '') == _get_admin_pass():
+                self._send_json(200, {'ok': True})
+            else:
+                self._send_json(401, {'error': 'Wrong password'})
 
         elif self.path == '/api/logout':
             token = self._auth_token()
