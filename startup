@@ -7,12 +7,28 @@ import time
 import socket
 import shutil
 import struct
+import json as _json
+import secrets
+import select
+import http.server
+import urllib.parse
+
+# ── LOGIN WHITELIST ────────────────────────────────────────────────────────────
+# Add or remove users here. Format: "username": "password"
+USERS = {
+    "admin": "changeme",
+}
+# ──────────────────────────────────────────────────────────────────────────────
 
 DISPLAY = ":99"
-VNC_PORT = 5900
-NOVNC_PORT = 5000
+VNC_PORT      = 5900
+INTERNAL_WS_PORT = 5001   # websockify listens here (internal)
+NOVNC_PORT    = 5000      # custom server exposed to the web
 NOVNC_SRC = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/webapps/novnc"
 NOVNC_WEB = "/tmp/novnc-web"
+
+# In-memory session store: token -> username
+_sessions = {}
 
 def kill_port_users(port):
     """Kill any process listening on the given port via /proc/net/tcp*."""
@@ -105,11 +121,44 @@ def setup_novnc_web():
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Browser</title>
+  <title>Virtual Browser</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: #111; font-family: system-ui, sans-serif; overflow: hidden; }
 
+    /* ── Login overlay ── */
+    #login-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: #0d0d0d;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #login-overlay.hidden { display: none; }
+    .login-box {
+      background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px;
+      padding: 36px 30px; width: 320px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .login-logo {
+      display: flex; align-items: center; justify-content: center; gap: 9px;
+      color: #ddd; font-size: 17px; font-weight: 600; margin-bottom: 4px;
+    }
+    .login-logo svg { width: 22px; height: 22px; fill: #4ade80; }
+    .login-input {
+      background: #111; border: 1px solid #333; color: #eee;
+      padding: 10px 13px; border-radius: 7px; font-size: 14px; width: 100%;
+      outline: none; transition: border-color 0.15s;
+    }
+    .login-input:focus { border-color: #4ade80; }
+    .login-btn {
+      background: #1a3a2a; border: 1px solid #2d5a3d; color: #4ade80;
+      padding: 11px; border-radius: 7px; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background 0.15s; width: 100%;
+    }
+    .login-btn:hover:not(:disabled) { background: #224d38; }
+    .login-btn:disabled { opacity: 0.5; cursor: default; }
+    .login-error { color: #f87171; font-size: 12px; text-align: center; min-height: 16px; }
+
+    /* ── Toolbar ── */
     #toolbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 20;
       display: flex; align-items: center; justify-content: space-between;
@@ -133,17 +182,20 @@ def setup_novnc_web():
       cursor: pointer; transition: background 0.15s, color 0.15s;
       user-select: none;
     }
-    .btn:hover { background: #2a2a2a; color: #fff; border-color: #555; }
+    .btn:hover:not(:disabled) { background: #2a2a2a; color: #fff; border-color: #555; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
     .btn svg { width: 13px; height: 13px; fill: currentColor; flex-shrink: 0; }
+    .btn.danger { border-color: #7f1d1d; color: #fca5a5; }
+    .btn.danger:hover:not(:disabled) { background: #2a1010; border-color: #ef4444; color: #fca5a5; }
 
+    /* ── Screen ── */
     #screen {
       position: fixed;
       top: 36px; left: 0; right: 0; bottom: 0;
-      overflow: hidden;
-      background: #000;
+      overflow: hidden; background: #000;
     }
 
-    /* Settings panel */
+    /* ── Settings panel ── */
     #settings-panel {
       position: fixed; top: 36px; right: 0; bottom: 0; z-index: 15;
       width: 200px; background: #161616; border-left: 1px solid #2a2a2a;
@@ -157,9 +209,7 @@ def setup_novnc_web():
     .setting-row { display: flex; flex-direction: column; gap: 5px; }
     .setting-label { display: flex; justify-content: space-between; color: #aaa; font-size: 12px; }
     .setting-label span { color: #6ee7b7; font-weight: 600; }
-    input[type=range] {
-      width: 100%; accent-color: #4ade80; height: 4px; cursor: pointer;
-    }
+    input[type=range] { width: 100%; accent-color: #4ade80; height: 4px; cursor: pointer; }
     .apply-btn {
       background: #1a3a2a; border: 1px solid #2d5a3d; color: #4ade80;
       padding: 7px; border-radius: 5px; font-size: 12px; cursor: pointer;
@@ -168,12 +218,14 @@ def setup_novnc_web():
     .apply-btn:hover { background: #224d38; }
     .divider { border: none; border-top: 1px solid #2a2a2a; margin: 0; }
 
+    /* ── Fullscreen ── */
     :fullscreen #toolbar { display: none; }
     :fullscreen #screen  { top: 0; }
     :fullscreen #settings-panel { top: 0; }
     :-webkit-full-screen #toolbar { display: none; }
     :-webkit-full-screen #screen  { top: 0; }
 
+    /* ── Toast ── */
     #status-msg {
       position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
       background: rgba(0,0,0,0.65); color: #aaa; font-size: 11px;
@@ -181,15 +233,56 @@ def setup_novnc_web():
       opacity: 0; transition: opacity 0.3s; z-index: 30;
     }
     #status-msg.show { opacity: 1; }
+
+    /* ── Restart overlay ── */
+    #restart-overlay {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(0,0,0,0.75);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; color: #bbb; font-size: 14px;
+    }
+    #restart-overlay.hidden { display: none; }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #333; border-top-color: #4ade80;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
+
+  <!-- Login -->
+  <div id="login-overlay">
+    <div class="login-box">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+        Virtual Browser
+      </div>
+      <input class="login-input" id="login-user" type="text"     placeholder="Username" autocomplete="username">
+      <input class="login-input" id="login-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <div class="login-error" id="login-error"></div>
+      <button class="login-btn" id="login-btn">Sign In</button>
+    </div>
+  </div>
+
+  <!-- Restart overlay -->
+  <div id="restart-overlay" class="hidden">
+    <div class="spinner"></div>
+    <span>Restarting browser session…</span>
+  </div>
+
+  <!-- Toolbar -->
   <div id="toolbar">
     <div class="toolbar-left">
       <div class="status-dot" id="dot"></div>
       <span class="title">Virtual Browser</span>
     </div>
     <div class="toolbar-right">
+      <button class="btn danger" id="restart-btn" title="Restart the browser session">
+        <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        Restart
+      </button>
       <button class="btn" id="settings-btn" title="Stream Settings">
         <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.02 7.02 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4a.484.484 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 8.87a.485.485 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.37 1.04.7 1.62.94l.36 2.54c.05.24.27.41.48.41h4c.22 0 .43-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
         Settings
@@ -203,17 +296,14 @@ def setup_novnc_web():
 
   <div id="settings-panel">
     <div class="panel-title">Stream Quality</div>
-
     <div class="setting-row">
       <div class="setting-label">Quality <span id="q-val">9</span></div>
       <input type="range" id="quality-slider" min="1" max="9" value="9">
     </div>
-
     <div class="setting-row">
       <div class="setting-label">Compression <span id="c-val">2</span></div>
       <input type="range" id="compression-slider" min="0" max="9" value="2">
     </div>
-
     <button class="apply-btn" id="apply-btn">Apply</button>
     <hr class="divider">
     <div style="color:#666;font-size:11px;line-height:1.5">
@@ -228,19 +318,94 @@ def setup_novnc_web():
   <script type="module">
     import RFB from '/core/rfb.js';
 
-    const screen      = document.getElementById('screen');
-    const dot         = document.getElementById('dot');
-    const fsBtn       = document.getElementById('fs-btn');
-    const settingsBtn = document.getElementById('settings-btn');
-    const panel       = document.getElementById('settings-panel');
-    const msg         = document.getElementById('status-msg');
-    const qSlider     = document.getElementById('quality-slider');
-    const cSlider     = document.getElementById('compression-slider');
-    const qVal        = document.getElementById('q-val');
-    const cVal        = document.getElementById('c-val');
-    const applyBtn    = document.getElementById('apply-btn');
-    let rfb           = null;
-    let retryTimer    = null;
+    const loginOverlay  = document.getElementById('login-overlay');
+    const loginUser     = document.getElementById('login-user');
+    const loginPass     = document.getElementById('login-pass');
+    const loginBtn      = document.getElementById('login-btn');
+    const loginError    = document.getElementById('login-error');
+    const restartOverlay= document.getElementById('restart-overlay');
+    const restartBtn    = document.getElementById('restart-btn');
+    const screen        = document.getElementById('screen');
+    const dot           = document.getElementById('dot');
+    const fsBtn         = document.getElementById('fs-btn');
+    const settingsBtn   = document.getElementById('settings-btn');
+    const panel         = document.getElementById('settings-panel');
+    const msg           = document.getElementById('status-msg');
+    const qSlider       = document.getElementById('quality-slider');
+    const cSlider       = document.getElementById('compression-slider');
+    const qVal          = document.getElementById('q-val');
+    const cVal          = document.getElementById('c-val');
+    const applyBtn      = document.getElementById('apply-btn');
+    let rfb             = null;
+    let retryTimer      = null;
+
+    // ── Auth ────────────────────────────────────────────────────────────────────
+
+    function getToken() { return sessionStorage.getItem('vb_token') || ''; }
+    function setToken(t) { sessionStorage.setItem('vb_token', t); }
+
+    async function checkAuth() {
+      const token = getToken();
+      if (!token) { showLoginOverlay(); return; }
+      try {
+        const res = await fetch('/api/me', { headers: { 'X-Auth-Token': token } });
+        if (res.ok) { hideLoginOverlay(); connect(); }
+        else { sessionStorage.removeItem('vb_token'); showLoginOverlay(); }
+      } catch(e) { showLoginOverlay(); }
+    }
+
+    function showLoginOverlay() { loginOverlay.classList.remove('hidden'); }
+    function hideLoginOverlay() { loginOverlay.classList.add('hidden'); }
+
+    async function doLogin() {
+      loginError.textContent = '';
+      loginBtn.disabled = true;
+      loginBtn.textContent = 'Signing in…';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setToken(data.token);
+          hideLoginOverlay();
+          connect();
+        } else {
+          loginError.textContent = data.error || 'Login failed';
+        }
+      } catch(e) {
+        loginError.textContent = 'Server unreachable';
+      }
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Sign In';
+    }
+
+    loginBtn.addEventListener('click', doLogin);
+    loginPass.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    loginUser.addEventListener('keydown', e => { if (e.key === 'Enter') loginPass.focus(); });
+
+    // ── Restart ─────────────────────────────────────────────────────────────────
+
+    async function doRestart() {
+      restartBtn.disabled = true;
+      restartOverlay.classList.remove('hidden');
+      if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
+      try {
+        await fetch('/api/restart', { method: 'POST', headers: { 'X-Auth-Token': getToken() } });
+      } catch(e) {}
+      // Give the stack ~8 seconds to come back up, then reconnect
+      setTimeout(() => {
+        restartOverlay.classList.add('hidden');
+        restartBtn.disabled = false;
+        connect();
+      }, 8000);
+    }
+
+    restartBtn.addEventListener('click', doRestart);
+
+    // ── VNC helpers ─────────────────────────────────────────────────────────────
 
     function showMsg(text, duration = 2500) {
       msg.textContent = text;
@@ -287,6 +452,8 @@ def setup_novnc_web():
       });
       rfb.addEventListener('disconnect', () => {
         dot.className = 'status-dot error';
+        // Don't retry if restart overlay is shown
+        if (!restartOverlay.classList.contains('hidden')) return;
         showMsg('Reconnecting…', 3000);
         retryTimer = setTimeout(connect, 2000);
       });
@@ -294,8 +461,6 @@ def setup_novnc_web():
         rfb.sendCredentials({ password: '' });
       });
     }
-
-    connect();
 
     new MutationObserver(() => {
       const canvas = screen.querySelector('canvas');
@@ -322,10 +487,6 @@ def setup_novnc_web():
       panel.classList.toggle('open');
       setTimeout(scaleCanvas, 220);
     });
-
-    const fsSupported = !!(document.documentElement.requestFullscreen ||
-                            document.documentElement.webkitRequestFullscreen ||
-                            document.documentElement.mozRequestFullScreen);
 
     function enterFS() {
       const el = document.documentElement;
@@ -354,6 +515,9 @@ def setup_novnc_web():
     }
     document.addEventListener('fullscreenchange', updateFsBtn);
     document.addEventListener('webkitfullscreenchange', updateFsBtn);
+
+    // ── Boot ─────────────────────────────────────────────────────────────────────
+    checkAuth();
   </script>
 </body>
 </html>
@@ -469,7 +633,7 @@ def run_novnc(vnc_host):
         target = f"[{vnc_host}]:{VNC_PORT}"
     else:
         target = f"{vnc_host}:{VNC_PORT}"
-    print(f"Starting noVNC on :{NOVNC_PORT} -> {target}")
+    print(f"Starting websockify on :{INTERNAL_WS_PORT} -> {target}")
     env = os.environ.copy()
     numpy_path = "/nix/store/12nkx5irbnfdh06frm3sxs7drdw9ah4r-python3.11-numpy-1.26.4/lib/python3.11/site-packages"
     existing = env.get("PYTHONPATH", "")
@@ -479,12 +643,198 @@ def run_novnc(vnc_host):
             subprocess.run([
                 "websockify",
                 "--web", NOVNC_WEB,
-                str(NOVNC_PORT),
+                str(INTERNAL_WS_PORT),
                 target
             ], env=env)
         except Exception as e:
             print(f"noVNC error: {e}")
         time.sleep(3)
+
+
+def _restart_browser_stack():
+    """Kill and restart VNC/Xvfb/Chromium without touching the HTTP server."""
+    print("Restarting browser stack...")
+    for name in ["x11vnc", "Xvfb", "chromium", "ungoogled-chromium"]:
+        subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
+    time.sleep(1)
+    for lock_file in [
+        "/tmp/chromium-data/SingletonLock",
+        "/tmp/chromium-data/SingletonSocket",
+        "/tmp/chromium-data/SingletonCookie",
+    ]:
+        try:
+            os.remove(lock_file)
+        except FileNotFoundError:
+            pass
+    reset_chromium_crash_flag()
+    threading.Thread(target=run_xvfb, daemon=True).start()
+    time.sleep(1)
+    threading.Thread(target=run_browser, daemon=True).start()
+    threading.Thread(target=run_x11vnc, daemon=True).start()
+    print("Browser stack restarted.")
+
+
+class _AppHandler(http.server.BaseHTTPRequestHandler):
+    """Custom HTTP handler: serves files, handles login/restart API,
+       and tunnels WebSocket upgrades to internal websockify."""
+
+    def log_message(self, format, *args):
+        pass  # suppress per-request logs
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _send_json(self, code, data):
+        body = _json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _auth_token(self):
+        return self.headers.get('X-Auth-Token', '')
+
+    # ── POST ───────────────────────────────────────────────────────────────────
+
+    def do_POST(self):
+        if self.path == '/api/login':
+            length = int(self.headers.get('Content-Length', 0))
+            try:
+                body = _json.loads(self.rfile.read(length))
+            except Exception:
+                self._send_json(400, {'error': 'Bad request'})
+                return
+            username = body.get('username', '')
+            password = body.get('password', '')
+            if USERS.get(username) == password:
+                token = secrets.token_hex(32)
+                _sessions[token] = username
+                self._send_json(200, {'token': token})
+            else:
+                self._send_json(401, {'error': 'Invalid username or password'})
+
+        elif self.path == '/api/restart':
+            if self._auth_token() not in _sessions:
+                self._send_json(403, {'error': 'Unauthorized'})
+                return
+            self._send_json(200, {'ok': True})
+            threading.Thread(target=_restart_browser_stack, daemon=True).start()
+
+        elif self.path == '/api/logout':
+            token = self._auth_token()
+            _sessions.pop(token, None)
+            self._send_json(200, {'ok': True})
+
+        else:
+            self.send_error(404)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token')
+        self.end_headers()
+
+    # ── GET ────────────────────────────────────────────────────────────────────
+
+    def do_GET(self):
+        # WebSocket tunnel
+        if (self.headers.get('Upgrade', '').lower() == 'websocket' and
+                '/websockify' in self.path):
+            self._tunnel_websocket()
+            return
+
+        if self.path == '/api/me':
+            if self._auth_token() in _sessions:
+                self._send_json(200, {'ok': True})
+            else:
+                self._send_json(401, {'error': 'Unauthorized'})
+            return
+
+        # Static file serving
+        path = urllib.parse.urlparse(self.path).path
+        if path == '/':
+            path = '/index.html'
+        file_path = os.path.join(NOVNC_WEB, path.lstrip('/'))
+        if os.path.isfile(file_path):
+            ext = os.path.splitext(file_path)[1]
+            mime = {
+                '.html': 'text/html', '.js': 'application/javascript',
+                '.css': 'text/css', '.png': 'image/png',
+                '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+                '.wasm': 'application/wasm',
+            }.get(ext, 'application/octet-stream')
+            with open(file_path, 'rb') as fh:
+                data = fh.read()
+            self.send_response(200)
+            self.send_header('Content-Type', mime)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_error(404)
+
+    # ── WebSocket tunnel ───────────────────────────────────────────────────────
+
+    def _tunnel_websocket(self):
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.connect(('127.0.0.1', INTERNAL_WS_PORT))
+        except Exception as e:
+            self.send_error(502, f"Upstream unavailable: {e}")
+            return
+
+        # Forward the original HTTP upgrade request upstream
+        raw = f"GET {self.path} HTTP/1.1\r\n"
+        for k, v in self.headers.items():
+            raw += f"{k}: {v}\r\n"
+        raw += "\r\n"
+        srv.sendall(raw.encode())
+
+        client = self.connection
+        self.close_connection = False
+
+        # Bidirectional tunnel via select
+        while True:
+            try:
+                r, _, e = select.select([client, srv], [], [client, srv], 10)
+            except Exception:
+                break
+            if e:
+                break
+            for s in r:
+                try:
+                    data = s.recv(65536)
+                except Exception:
+                    data = None
+                if not data:
+                    try:
+                        srv.close()
+                    except Exception:
+                        pass
+                    return
+                other = srv if s is client else client
+                try:
+                    other.sendall(data)
+                except Exception:
+                    try:
+                        srv.close()
+                    except Exception:
+                        pass
+                    return
+        try:
+            srv.close()
+        except Exception:
+            pass
+
+
+def run_app_server():
+    """Run the main HTTP server on NOVNC_PORT."""
+    server = http.server.ThreadingHTTPServer(('', NOVNC_PORT), _AppHandler)
+    server.daemon_threads = True
+    print(f"App server listening on :{NOVNC_PORT}")
+    server.serve_forever()
 
 def reset_chromium_crash_flag():
     prefs_dir = "/tmp/chromium-data/Default"
@@ -531,4 +881,8 @@ if __name__ == "__main__":
     vnc_host = wait_for_vnc(VNC_PORT, timeout=30)
     print(f"VNC ready at {vnc_host}:{VNC_PORT}")
 
-    run_novnc(vnc_host)
+    # Start websockify on internal port (WebSocket <-> VNC bridge)
+    threading.Thread(target=run_novnc, args=(vnc_host,), daemon=True).start()
+
+    # Start the main app server on the public port (auth + restart + WS tunnel)
+    run_app_server()
