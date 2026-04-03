@@ -493,6 +493,10 @@ def setup_novnc_web():
         <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
         Fullscreen
       </button>
+      <button class="btn" id="logout-btn" title="Sign out">
+        <svg viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+        Sign Out
+      </button>
     </div>
   </div>
 
@@ -695,6 +699,22 @@ def setup_novnc_web():
     }
 
     restartBtn.addEventListener('click', doRestart);
+
+    // ── Logout ───────────────────────────────────────────────────────────────────
+
+    async function doLogout() {
+      const token = getToken();
+      if (token) {
+        try { await fetch('/api/logout', { method: 'POST', headers: { 'X-Auth-Token': token } }); } catch(e) {}
+      }
+      localStorage.removeItem('vb_token');
+      stopHeartbeat();
+      if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
+      clearTimeout(retryTimer);
+      showLoginOverlay();
+    }
+
+    document.getElementById('logout-btn').addEventListener('click', doLogout);
 
     // ── VNC helpers ─────────────────────────────────────────────────────────────
 
