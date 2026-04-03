@@ -471,8 +471,9 @@ def setup_novnc_web():
       });
       rfb.addEventListener('disconnect', () => {
         dot.className = 'status-dot error';
-        // Don't retry if restart overlay is shown
+        // Don't retry during restart or if login screen is showing
         if (!restartOverlay.classList.contains('hidden')) return;
+        if (!loginOverlay.classList.contains('hidden')) return;
         showMsg('Reconnecting…', 3000);
         retryTimer = setTimeout(connect, 2000);
       });
