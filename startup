@@ -543,8 +543,8 @@ def setup_novnc_web():
 
     // ── Auth ────────────────────────────────────────────────────────────────────
 
-    function getToken() { return sessionStorage.getItem('vb_token') || ''; }
-    function setToken(t) { sessionStorage.setItem('vb_token', t); }
+    function getToken() { return localStorage.getItem('vb_token') || ''; }
+    function setToken(t) { localStorage.setItem('vb_token', t); }
 
     // ── Session heartbeat (detects when another device takes over the account) ────
 
@@ -560,7 +560,7 @@ def setup_novnc_web():
           const res = await fetch('/api/me', { headers: { 'X-Auth-Token': token } });
           if (!res.ok) {
             stopHeartbeat();
-            sessionStorage.removeItem('vb_token');
+            localStorage.removeItem('vb_token');
             if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
             clearTimeout(retryTimer);
             kickedOut();
@@ -618,7 +618,7 @@ def setup_novnc_web():
       try {
         const res = await fetch('/api/me', { headers: { 'X-Auth-Token': token } });
         if (res.ok) { hideLoginOverlay(); connect(); startHeartbeat(); }
-        else { sessionStorage.removeItem('vb_token'); showLoginOverlay(); }
+        else { localStorage.removeItem('vb_token'); showLoginOverlay(); }
       } catch(e) { showLoginOverlay(); }
     }
 
