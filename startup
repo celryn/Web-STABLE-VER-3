@@ -52,6 +52,41 @@ _sessions = {}
 # Signal used to stop the browser restart loop before launching a new one
 _browser_stop_event = threading.Event()
 
+# ── Device tracking ────────────────────────────────────────────────────────────
+_DEVICES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "devices.json")
+_devices_lock = threading.Lock()
+
+def _load_devices():
+    try:
+        with open(_DEVICES_FILE) as f:
+            return _json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+def _save_devices(data):
+    with open(_DEVICES_FILE, 'w') as f:
+        _json.dump(data, f, indent=2)
+
+def _record_device(username, fingerprint, label):
+    with _devices_lock:
+        data = _load_devices()
+        if username not in data:
+            data[username] = {}
+        now = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
+        if fingerprint not in data[username]:
+            data[username][fingerprint] = {
+                'label': label,
+                'first_seen': now,
+                'last_seen': now,
+                'logins': 1,
+            }
+        else:
+            data[username][fingerprint]['last_seen'] = now
+            data[username][fingerprint]['logins'] += 1
+            if label and label != 'Unknown on Unknown':
+                data[username][fingerprint]['label'] = label
+        _save_devices(data)
+
 def kill_port_users(port):
     """Kill any process listening on the given port via /proc/net/tcp*."""
     hex_port = format(port, 'X').zfill(4)
@@ -240,6 +275,62 @@ def setup_novnc_web():
     .apply-btn:hover { background: #224d38; }
     .divider { border: none; border-top: 1px solid #2a2a2a; margin: 0; }
 
+    /* ── Devices modal ── */
+    #devices-modal {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #devices-modal.hidden { display: none; }
+    .devices-box {
+      background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px;
+      width: 500px; max-width: 95vw; max-height: 72vh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .devices-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid #2a2a2a; flex-shrink: 0;
+    }
+    .devices-title { color: #ddd; font-size: 14px; font-weight: 600; }
+    .devices-close {
+      background: none; border: none; color: #888; cursor: pointer;
+      font-size: 18px; line-height: 1; padding: 0 4px;
+    }
+    .devices-close:hover { color: #fff; }
+    .devices-body { overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .user-row { background: #141414; border: 1px solid #2a2a2a; border-radius: 7px; overflow: hidden; }
+    .user-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; background: #1e1e1e; cursor: pointer; user-select: none;
+    }
+    .user-header:hover { background: #242424; }
+    .user-name { color: #eee; font-size: 13px; font-weight: 500; }
+    .device-badge {
+      font-size: 11px; padding: 2px 9px; border-radius: 10px;
+      background: #1a3a2a; color: #4ade80; border: 1px solid #2d5a3d;
+    }
+    .device-badge.warn { background: #3a2a10; color: #fbbf24; border-color: #92400e; }
+    .device-badge.danger { background: #3a1010; color: #f87171; border-color: #7f1d1d; }
+    .device-list { display: none; }
+    .device-list.open { display: block; }
+    .device-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-top: 1px solid #222; font-size: 11px; color: #aaa;
+    }
+    .device-label { color: #ccc; font-size: 12px; }
+    .device-meta { text-align: right; line-height: 1.5; }
+    .no-devices { color: #666; font-size: 12px; text-align: center; padding: 24px; }
+    .devices-loading { color: #888; font-size: 13px; text-align: center; padding: 24px; }
+    .devices-refresh {
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 8px 16px; border-top: 1px solid #2a2a2a; flex-shrink: 0;
+    }
+    .devices-refresh button {
+      background: none; border: 1px solid #333; color: #888; border-radius: 5px;
+      padding: 4px 12px; font-size: 11px; cursor: pointer;
+    }
+    .devices-refresh button:hover { border-color: #555; color: #ccc; }
+
     /* ── Fullscreen ── */
     :fullscreen #toolbar { display: none; }
     :fullscreen #screen  { top: 0; }
@@ -288,6 +379,22 @@ def setup_novnc_web():
     </div>
   </div>
 
+  <!-- Devices modal -->
+  <div id="devices-modal" class="hidden">
+    <div class="devices-box">
+      <div class="devices-header">
+        <span class="devices-title">Device Tracker</span>
+        <button class="devices-close" id="devices-close">&#x2715;</button>
+      </div>
+      <div class="devices-body" id="devices-body">
+        <div class="devices-loading">Loading&#x2026;</div>
+      </div>
+      <div class="devices-refresh">
+        <button id="devices-refresh-btn">Refresh</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Restart overlay -->
   <div id="restart-overlay" class="hidden">
     <div class="spinner"></div>
@@ -304,6 +411,10 @@ def setup_novnc_web():
       <button class="btn danger" id="restart-btn" title="Restart the browser session">
         <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
         Restart
+      </button>
+      <button class="btn" id="devices-btn" title="Device Tracker">
+        <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
+        Devices
       </button>
       <button class="btn" id="settings-btn" title="Stream Settings">
         <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.02 7.02 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4a.484.484 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 8.87a.485.485 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.37 1.04.7 1.62.94l.36 2.54c.05.24.27.41.48.41h4c.22 0 .43-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
@@ -366,6 +477,41 @@ def setup_novnc_web():
     function getToken() { return sessionStorage.getItem('vb_token') || ''; }
     function setToken(t) { sessionStorage.setItem('vb_token', t); }
 
+    // ── Device fingerprinting ────────────────────────────────────────────────────
+
+    async function getDeviceFingerprint() {
+      const raw = [
+        navigator.userAgent,
+        screen.width + 'x' + screen.height,
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+        navigator.language,
+        navigator.platform || '',
+        screen.colorDepth
+      ].join('|');
+      try {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 16);
+      } catch(e) {
+        return 'unknown';
+      }
+    }
+
+    function getDeviceLabel() {
+      const ua = navigator.userAgent;
+      let os = 'Unknown';
+      if (/Windows/.test(ua)) os = 'Windows';
+      else if (/Android/.test(ua)) os = 'Android';
+      else if (/iPhone|iPad/.test(ua)) os = 'iOS';
+      else if (/Mac/.test(ua)) os = 'Mac';
+      else if (/Linux|X11/.test(ua)) os = 'Linux';
+      let browser = 'Unknown';
+      if (/Edg/.test(ua)) browser = 'Edge';
+      else if (/Chrome/.test(ua)) browser = 'Chrome';
+      else if (/Firefox/.test(ua)) browser = 'Firefox';
+      else if (/Safari/.test(ua)) browser = 'Safari';
+      return browser + ' on ' + os;
+    }
+
     async function checkAuth() {
       const token = getToken();
       if (!token) { showLoginOverlay(); return; }
@@ -383,11 +529,13 @@ def setup_novnc_web():
       loginError.textContent = '';
       loginBtn.disabled = true;
       loginBtn.textContent = 'Signing in…';
+      const device_fp = await getDeviceFingerprint();
+      const device_label = getDeviceLabel();
       try {
         const res = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value })
+          body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value, device_fp, device_label })
         });
         const data = await res.json();
         if (res.ok) {
@@ -510,6 +658,79 @@ def setup_novnc_web():
       panel.classList.toggle('open');
       setTimeout(scaleCanvas, 220);
     });
+
+    // ── Devices panel ────────────────────────────────────────────────────────────
+
+    const devicesModal      = document.getElementById('devices-modal');
+    const devicesBody       = document.getElementById('devices-body');
+    const devicesBtn        = document.getElementById('devices-btn');
+    const devicesCloseBtn   = document.getElementById('devices-close');
+    const devicesRefreshBtn = document.getElementById('devices-refresh-btn');
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderDevices(data) {
+      const users = Object.keys(data);
+      if (!users.length) {
+        devicesBody.innerHTML = '<div class="no-devices">No login records yet.</div>';
+        return;
+      }
+      devicesBody.innerHTML = '';
+      for (const user of users.sort()) {
+        const devices = data[user];
+        const fps = Object.keys(devices);
+        const count = fps.length;
+        const badgeCls = count >= 4 ? 'danger' : count >= 2 ? 'warn' : '';
+
+        const row = document.createElement('div');
+        row.className = 'user-row';
+
+        const header = document.createElement('div');
+        header.className = 'user-header';
+        header.innerHTML =
+          '<span class="user-name">' + escHtml(user) + '</span>' +
+          '<span class="device-badge ' + badgeCls + '">' + count + ' device' + (count !== 1 ? 's' : '') + '</span>';
+
+        const list = document.createElement('div');
+        list.className = 'device-list';
+
+        for (const fp of fps) {
+          const d = devices[fp];
+          const item = document.createElement('div');
+          item.className = 'device-item';
+          item.innerHTML =
+            '<span class="device-label">' + escHtml(d.label || fp) + '</span>' +
+            '<span class="device-meta">' +
+              '<div>Last seen: ' + escHtml(d.last_seen) + '</div>' +
+              '<div style="color:#666">' + (d.logins || 1) + ' login' + ((d.logins || 1) !== 1 ? 's' : '') + ' &middot; since ' + escHtml(d.first_seen) + '</div>' +
+            '</span>';
+          list.appendChild(item);
+        }
+
+        header.addEventListener('click', () => list.classList.toggle('open'));
+        row.appendChild(header);
+        row.appendChild(list);
+        devicesBody.appendChild(row);
+      }
+    }
+
+    async function loadDevices() {
+      devicesBody.innerHTML = '<div class="devices-loading">Loading\u2026</div>';
+      try {
+        const res = await fetch('/api/admin/devices', { headers: { 'X-Auth-Token': getToken() } });
+        if (!res.ok) { devicesBody.innerHTML = '<div class="no-devices">Unauthorized</div>'; return; }
+        renderDevices(await res.json());
+      } catch(e) {
+        devicesBody.innerHTML = '<div class="no-devices">Failed to load device data.</div>';
+      }
+    }
+
+    devicesBtn.addEventListener('click', () => { devicesModal.classList.remove('hidden'); loadDevices(); });
+    devicesCloseBtn.addEventListener('click', () => devicesModal.classList.add('hidden'));
+    devicesRefreshBtn.addEventListener('click', loadDevices);
+    devicesModal.addEventListener('click', e => { if (e.target === devicesModal) devicesModal.classList.add('hidden'); });
 
     function enterFS() {
       const el = document.documentElement;
@@ -740,6 +961,13 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             if USERS().get(username) == password:
                 token = secrets.token_hex(32)
                 _sessions[token] = username
+                device_fp = body.get('device_fp', 'unknown')
+                device_label = body.get('device_label', 'Unknown')
+                threading.Thread(
+                    target=_record_device,
+                    args=(username, device_fp, device_label),
+                    daemon=True
+                ).start()
                 self._send_json(200, {'token': token})
             else:
                 self._send_json(401, {'error': 'Invalid username or password'})
@@ -780,6 +1008,15 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(200, {'ok': True})
             else:
                 self._send_json(401, {'error': 'Unauthorized'})
+            return
+
+        if self.path == '/api/admin/devices':
+            if self._auth_token() not in _sessions:
+                self._send_json(403, {'error': 'Unauthorized'})
+                return
+            with _devices_lock:
+                data = _load_devices()
+            self._send_json(200, data)
             return
 
         # Static file serving
