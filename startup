@@ -14,11 +14,30 @@ import http.server
 import urllib.parse
 
 # ── LOGIN WHITELIST ────────────────────────────────────────────────────────────
-# Add or remove users here. Format: "username": "password"
-USERS = {
-    "admin": "changeme",
-}
+# Users are loaded from the "acc" file next to this script.
+# Edit that file to add/remove accounts; no restart needed between logins.
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _load_users():
+    """Read username=password pairs from the 'acc' file."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "acc")
+    users = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    u, p = line.split('=', 1)
+                    users[u.strip()] = p.strip()
+    except FileNotFoundError:
+        print(f"WARNING: acc file not found at {path} — no users loaded")
+    return users
+
+def USERS():
+    """Always re-read the acc file so changes take effect without a restart."""
+    return _load_users()
 
 DISPLAY = ":99"
 VNC_PORT      = 5900
@@ -707,7 +726,7 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 return
             username = body.get('username', '')
             password = body.get('password', '')
-            if USERS.get(username) == password:
+            if USERS().get(username) == password:
                 token = secrets.token_hex(32)
                 _sessions[token] = username
                 self._send_json(200, {'token': token})
