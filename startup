@@ -48,6 +48,9 @@ NOVNC_WEB = "/tmp/novnc-web"
 
 # In-memory session store: token -> username
 _sessions = {}
+# Reverse lookup: username -> current active token (enforces one session per account)
+_user_to_token = {}
+_session_lock = threading.Lock()
 
 # Signal used to stop the browser restart loop before launching a new one
 _browser_stop_event = threading.Event()
@@ -482,10 +485,6 @@ def setup_novnc_web():
         <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.5-2.33 6.79-5 7.93-2.67-1.14-5-4.43-5-7.93V7.18L12 5z"/></svg>
         Admin
       </button>
-      <button class="btn" id="devices-btn" title="Device Tracker">
-        <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
-        Devices
-      </button>
       <button class="btn" id="settings-btn" title="Stream Settings">
         <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.02 7.02 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4a.484.484 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 8.87a.485.485 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.37 1.04.7 1.62.94l.36 2.54c.05.24.27.41.48.41h4c.22 0 .43-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
         Settings
@@ -547,6 +546,37 @@ def setup_novnc_web():
     function getToken() { return sessionStorage.getItem('vb_token') || ''; }
     function setToken(t) { sessionStorage.setItem('vb_token', t); }
 
+    // ── Session heartbeat (detects when another device takes over the account) ────
+
+    let _heartbeatTimer = null;
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      _heartbeatTimer = setInterval(async () => {
+        if (loginOverlay && !loginOverlay.classList.contains('hidden')) return;
+        const token = getToken();
+        if (!token) return;
+        try {
+          const res = await fetch('/api/me', { headers: { 'X-Auth-Token': token } });
+          if (!res.ok) {
+            stopHeartbeat();
+            sessionStorage.removeItem('vb_token');
+            if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
+            clearTimeout(retryTimer);
+            kickedOut();
+          }
+        } catch(e) { /* network blip, ignore */ }
+      }, 25000);
+    }
+
+    function stopHeartbeat() {
+      if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+    }
+
+    function kickedOut() {
+      showLoginOverlay('Your session was ended — another device signed in to this account.');
+    }
+
     // ── Device fingerprinting ────────────────────────────────────────────────────
 
     async function getDeviceFingerprint() {
@@ -587,13 +617,23 @@ def setup_novnc_web():
       if (!token) { showLoginOverlay(); return; }
       try {
         const res = await fetch('/api/me', { headers: { 'X-Auth-Token': token } });
-        if (res.ok) { hideLoginOverlay(); connect(); }
+        if (res.ok) { hideLoginOverlay(); connect(); startHeartbeat(); }
         else { sessionStorage.removeItem('vb_token'); showLoginOverlay(); }
       } catch(e) { showLoginOverlay(); }
     }
 
-    function showLoginOverlay() { loginOverlay.classList.remove('hidden'); }
-    function hideLoginOverlay() { loginOverlay.classList.add('hidden'); }
+    function showLoginOverlay(kickMsg) {
+      stopHeartbeat();
+      loginOverlay.classList.remove('hidden');
+      if (kickMsg) {
+        loginError.textContent = kickMsg;
+        loginError.style.color = '#fbbf24';
+      } else {
+        loginError.textContent = '';
+        loginError.style.color = '';
+      }
+    }
+    function hideLoginOverlay() { loginOverlay.classList.add('hidden'); loginError.style.color = ''; }
 
     async function doLogin() {
       loginError.textContent = '';
@@ -612,6 +652,7 @@ def setup_novnc_web():
           setToken(data.token);
           hideLoginOverlay();
           connect();
+          startHeartbeat();
         } else {
           loginError.textContent = data.error || 'Login failed';
         }
@@ -1081,8 +1122,14 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             username = body.get('username', '')
             password = body.get('password', '')
             if USERS().get(username) == password:
-                token = secrets.token_hex(32)
-                _sessions[token] = username
+                with _session_lock:
+                    # Revoke any existing session for this account (kicks the other device)
+                    old_token = _user_to_token.get(username)
+                    if old_token:
+                        _sessions.pop(old_token, None)
+                    token = secrets.token_hex(32)
+                    _sessions[token] = username
+                    _user_to_token[username] = token
                 device_fp = body.get('device_fp', 'unknown')
                 device_label = body.get('device_label', 'Unknown')
                 threading.Thread(
@@ -1118,7 +1165,10 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
 
         elif self.path == '/api/logout':
             token = self._auth_token()
-            _sessions.pop(token, None)
+            with _session_lock:
+                username = _sessions.pop(token, None)
+                if username and _user_to_token.get(username) == token:
+                    _user_to_token.pop(username, None)
             self._send_json(200, {'ok': True})
 
         else:

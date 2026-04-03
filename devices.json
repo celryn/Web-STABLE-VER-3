@@ -1,0 +1,16 @@
+{
+  "Admin": {
+    "2d7a60d6adb55610": {
+      "label": "Unknown on iOS",
+      "first_seen": "2026-04-03 19:45 UTC",
+      "last_seen": "2026-04-03 19:45 UTC",
+      "logins": 1
+    },
+    "69b2677f20d07dc6": {
+      "label": "Chrome on Windows",
+      "first_seen": "2026-04-03 20:59 UTC",
+      "last_seen": "2026-04-03 20:59 UTC",
+      "logins": 1
+    }
+  }
+}
