@@ -12,6 +12,7 @@ import secrets
 import select
 import http.server
 import urllib.parse
+import gzip as _gzip
 
 # ── LOGIN WHITELIST ────────────────────────────────────────────────────────────
 # Users are loaded from the "acc" file next to this script.
@@ -58,6 +59,10 @@ _free_slots    = set(range(MAX_SLOTS))   # slot IDs that are available
 _active_slots  = {}                      # slot_id -> slot_info dict
 _token_to_slot = {}                      # token   -> slot_id
 _session_lock  = threading.Lock()
+
+# Idle session timeout (seconds) — auto-free slots for inactive users
+IDLE_TIMEOUT = 1800   # 30 minutes
+_last_activity = {}   # token -> timestamp of last heartbeat/activity
 
 # ── Admin password ─────────────────────────────────────────────────────────────
 _ADMIN_PASS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AD Pass")
@@ -1093,7 +1098,9 @@ def _start_slot(slot_id, username):
         "-display", display,
         "-nopw", "-rfbport", str(vnc_port),
         "-forever", "-shared", "-quiet",
+        "-threads",
         "-xdamage", "-noxrecord", "-nowireframe",
+        "-noxfixes",
         "-defer", "3", "-wait", "3",
         "-xrandr", "resize",
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1118,16 +1125,18 @@ def _start_slot(slot_id, username):
                         "--disable-translate", "--disable-hang-monitor",
                         "--disable-component-update", "--disable-default-apps",
                         "--disable-client-side-phishing-detection",
-                        "--disable-features=TranslateUI,Translate",
+                        "--disable-features=TranslateUI,Translate,ScrollAnimations,SmoothScrolling",
                         "--disable-renderer-backgrounding",
                         "--disable-backgrounding-occluded-windows",
                         "--disable-background-timer-throttling",
                         "--autoplay-policy=no-user-gesture-required",
                         "--allow-running-insecure-content",
                         "--metrics-recording-only",
-                        "--disk-cache-size=268435456",
-                        "--memory-pressure-off",
-                        "--max-tiles-for-interest-area=512",
+                        "--disk-cache-size=67108864",
+                        "--renderer-process-limit=3",
+                        "--disable-gpu-compositing",
+                        "--disable-smooth-scrolling",
+                        "--max-tiles-for-interest-area=256",
                         "--disable-session-crashed-bubble",
                         "--disable-logging",
                         "--log-level=3",
@@ -1135,6 +1144,7 @@ def _start_slot(slot_id, username):
                         "--enable-quic",
                         "--enable-tcp-fast-open",
                         "--no-zygote",
+                        "--js-flags=--max-old-space-size=256",
                         "--enable-features=NetworkService,NetworkServiceInProcess,ParallelDownloading",
                         "about:blank"
                     ], env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1293,6 +1303,7 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 threading.Thread(target=_start_slot, args=(slot_id, username), daemon=True).start()
                 device_fp    = body.get('device_fp', 'unknown')
                 device_label = body.get('device_label', 'Unknown')
+                _last_activity[token] = time.time()
                 threading.Thread(
                     target=_record_device,
                     args=(username, device_fp, device_label),
@@ -1363,6 +1374,7 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
         if self.path == '/api/me':
             token = self._auth_token()
             if token in _sessions:
+                _last_activity[token] = time.time()
                 self._send_json(200, {'ok': True, 'username': _sessions[token]})
             else:
                 self._send_json(401, {'error': 'Unauthorized'})
@@ -1392,9 +1404,16 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             }.get(ext, 'application/octet-stream')
             with open(file_path, 'rb') as fh:
                 data = fh.read()
+            accept_enc = self.headers.get('Accept-Encoding', '')
+            use_gzip = 'gzip' in accept_enc and ext in ('.html', '.js', '.css')
+            if use_gzip:
+                data = _gzip.compress(data, compresslevel=6)
             self.send_response(200)
             self.send_header('Content-Type', mime)
             self.send_header('Content-Length', str(len(data)))
+            if use_gzip:
+                self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Cache-Control', 'public, max-age=300')
             self.end_headers()
             self.wfile.write(data)
         else:
@@ -1444,7 +1463,7 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 break
             for s in r:
                 try:
-                    data = s.recv(65536)
+                    data = s.recv(131072)
                 except Exception:
                     data = None
                 if not data:
@@ -1468,6 +1487,26 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             pass
 
 
+def _idle_reaper():
+    """Periodically free slots for users who haven't been active within IDLE_TIMEOUT."""
+    while True:
+        time.sleep(60)
+        now = time.time()
+        to_kill = []
+        with _session_lock:
+            for token, ts in list(_last_activity.items()):
+                if now - ts > IDLE_TIMEOUT and token in _sessions:
+                    username = _sessions.pop(token, None)
+                    if username and _user_to_token.get(username) == token:
+                        _user_to_token.pop(username, None)
+                    slot_id = _token_to_slot.pop(token, None)
+                    _last_activity.pop(token, None)
+                    if slot_id is not None:
+                        to_kill.append((slot_id, username))
+        for sid, uname in to_kill:
+            print(f"[idle] Auto-freeing slot {sid} for '{uname}' (inactive {IDLE_TIMEOUT}s)")
+            _stop_slot(sid)
+
 def run_app_server():
     """Run the main HTTP server on NOVNC_PORT."""
     server = http.server.ThreadingHTTPServer(('', NOVNC_PORT), _AppHandler)
@@ -1479,5 +1518,5 @@ if __name__ == "__main__":
     print("Cleaning up old processes...")
     kill_old_processes()
     setup_novnc_web()
-    # Start the main HTTP server — browser sessions launch on-demand at login
+    threading.Thread(target=_idle_reaper, daemon=True).start()
     run_app_server()

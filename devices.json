@@ -9,8 +9,8 @@
     "69b2677f20d07dc6": {
       "label": "Chrome on Windows",
       "first_seen": "2026-04-03 20:59 UTC",
-      "last_seen": "2026-04-04 01:11 UTC",
-      "logins": 8
+      "last_seen": "2026-04-04 01:17 UTC",
+      "logins": 9
     },
     "test": {
       "label": "test",
@@ -34,6 +34,12 @@
       "label": "verify",
       "first_seen": "2026-04-04 01:13 UTC",
       "last_seen": "2026-04-04 01:13 UTC",
+      "logins": 1
+    },
+    "fp-perf": {
+      "label": "perf-test",
+      "first_seen": "2026-04-04 01:21 UTC",
+      "last_seen": "2026-04-04 01:21 UTC",
       "logins": 1
     }
   },
