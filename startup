@@ -743,20 +743,6 @@ def setup_novnc_web():
       showMsg._t = setTimeout(() => msg.classList.remove('show'), duration);
     }
 
-    function scaleCanvas() {
-      const canvas = screen.querySelector('canvas');
-      if (!canvas) return;
-      const sw = screen.clientWidth;
-      const sh = screen.clientHeight;
-      if (!sw || !sh) return;
-      canvas.style.position = 'absolute';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      canvas.style.width = sw + 'px';
-      canvas.style.height = sh + 'px';
-      canvas.style.transform = 'none';
-    }
-
     function connect() {
       clearTimeout(retryTimer);
       if (rfb) { try { rfb.disconnect(); } catch(e){} rfb = null; }
@@ -767,6 +753,7 @@ def setup_novnc_web():
 
       rfb = new RFB(screen, wsUrl);
       rfb.scaleViewport    = true;
+      rfb.clipViewport     = false;
       rfb.resizeSession    = false;
       rfb.viewOnly         = false;
       rfb.qualityLevel     = parseInt(qSlider.value);
@@ -775,13 +762,9 @@ def setup_novnc_web():
       rfb.addEventListener('connect', () => {
         dot.className = 'status-dot connected';
         showMsg('Connected', 1500);
-        scaleCanvas();
-        setTimeout(scaleCanvas, 500);
-        setTimeout(scaleCanvas, 1500);
       });
       rfb.addEventListener('disconnect', () => {
         dot.className = 'status-dot error';
-        // Don't retry during restart or if login screen is showing
         if (!restartOverlay.classList.contains('hidden')) return;
         if (!loginOverlay.classList.contains('hidden')) return;
         showMsg('Reconnecting…', 3000);
@@ -791,16 +774,6 @@ def setup_novnc_web():
         rfb.sendCredentials({ password: '' });
       });
     }
-
-    new MutationObserver(() => {
-      const canvas = screen.querySelector('canvas');
-      if (canvas) {
-        scaleCanvas();
-        new ResizeObserver(scaleCanvas).observe(canvas);
-      }
-    }).observe(screen, { childList: true, subtree: true });
-
-    new ResizeObserver(scaleCanvas).observe(screen);
 
     qSlider.addEventListener('input', () => { qVal.textContent = qSlider.value; });
     cSlider.addEventListener('input', () => { cVal.textContent = cSlider.value; });
@@ -815,7 +788,6 @@ def setup_novnc_web():
 
     settingsBtn.addEventListener('click', () => {
       panel.classList.toggle('open');
-      setTimeout(scaleCanvas, 220);
     });
 
     // ── Devices panel ────────────────────────────────────────────────────────────
@@ -1066,7 +1038,7 @@ def _start_slot(slot_id, username):
 
     # 1. Xvfb
     xvfb = subprocess.Popen(
-        ["Xvfb", display, "-screen", "0", "1024x640x24", "-ac", "-nolisten", "tcp"],
+        ["Xvfb", display, "-screen", "0", "1280x720x24", "-ac", "-nolisten", "tcp"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     procs.append(xvfb)
@@ -1125,7 +1097,7 @@ def _start_slot(slot_id, username):
                         "--disable-dev-shm-usage",
                         "--no-first-run", "--no-default-browser-check",
                         "--start-maximized",
-                        "--window-position=0,0", "--window-size=1024,640",
+                        "--window-position=0,0", "--window-size=1280,720",
                         "--disable-extensions", "--disable-sync",
                         "--disable-translate", "--disable-hang-monitor",
                         "--disable-component-update", "--disable-default-apps",
