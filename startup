@@ -39,21 +39,25 @@ def USERS():
     """Always re-read the acc file so changes take effect without a restart."""
     return _load_users()
 
-DISPLAY = ":99"
-VNC_PORT      = 5900
-INTERNAL_WS_PORT = 5001   # websockify listens here (internal)
-NOVNC_PORT    = 5000      # custom server exposed to the web
-NOVNC_SRC = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/webapps/novnc"
-NOVNC_WEB = "/tmp/novnc-web"
+NOVNC_PORT = 5000      # main HTTP server
+NOVNC_SRC  = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/webapps/novnc"
+NOVNC_WEB  = "/tmp/novnc-web"
+
+# Per-user browser session slot pool
+MAX_SLOTS      = 20
+_BASE_DISP_NUM = 100   # Xvfb displays  :100 – :119
+_BASE_VNC_PORT = 5901  # x11vnc ports   5901 – 5920
+_BASE_WS_PORT  = 6001  # websockify     6001 – 6020  (internal only)
 
 # In-memory session store: token -> username
 _sessions = {}
-# Reverse lookup: username -> current active token (enforces one session per account)
+# Reverse lookup: username -> current active token
 _user_to_token = {}
-_session_lock = threading.Lock()
-
-# Signal used to stop the browser restart loop before launching a new one
-_browser_stop_event = threading.Event()
+# Slot maps — all protected by _session_lock
+_free_slots    = set(range(MAX_SLOTS))   # slot IDs that are available
+_active_slots  = {}                      # slot_id -> slot_info dict
+_token_to_slot = {}                      # token   -> slot_id
+_session_lock  = threading.Lock()
 
 # ── Admin password ─────────────────────────────────────────────────────────────
 _ADMIN_PASS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AD Pass")
@@ -137,12 +141,8 @@ def kill_old_processes():
     for name in ["x11vnc", "Xvfb", "websockify", "chromium", "ungoogled-chromium"]:
         subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
     time.sleep(1)
-    kill_port_users(VNC_PORT)
     kill_port_users(NOVNC_PORT)
-    # Second pass to catch any survivors
-    for name in ["websockify", "x11vnc"]:
-        subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
-    time.sleep(1)
+    time.sleep(0.5)
 
 def wait_for_vnc(port, timeout=30):
     """Wait for VNC, verifying the RFB handshake. Returns the working address."""
@@ -745,7 +745,7 @@ def setup_novnc_web():
       screen.innerHTML = '';
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = proto + '//' + location.host + '/websockify';
+      const wsUrl = proto + '//' + location.host + '/websockify?token=' + encodeURIComponent(getToken());
 
       rfb = new RFB(screen, wsUrl);
       rfb.scaleViewport    = false;
@@ -960,160 +960,220 @@ def setup_novnc_web():
     with open(os.path.join(NOVNC_WEB, "index.html"), "w") as f:
         f.write(index)
 
-def run_xvfb():
-    print("Starting Xvfb...")
-    subprocess.run([
-        "Xvfb", DISPLAY,
-        "-screen", "0", "1200x800x24",
-        "-ac"
-    ])
+_NUMPY_PATH = "/nix/store/12nkx5irbnfdh06frm3sxs7drdw9ah4r-python3.11-numpy-1.26.4/lib/python3.11/site-packages"
 
-def run_browser():
-    browser = None
+def _find_browser():
+    """Return path to Chromium binary, or None."""
     for cmd in ["ungoogled-chromium", "chromium"]:
         try:
             subprocess.run(["which", cmd], check=True, capture_output=True)
-            browser = cmd
-            break
+            return cmd
         except subprocess.CalledProcessError:
             continue
+    try:
+        res = subprocess.run(
+            "find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1",
+            shell=True, capture_output=True, text=True
+        )
+        b = res.stdout.strip()
+        if b:
+            return b
+    except Exception:
+        pass
+    return None
 
-    if not browser:
+def _reset_chromium_prefs(slot_id):
+    """Clear the 'crashed' flag so Chromium doesn't show the restore bubble."""
+    prefs_file = f"/tmp/chromium-data-{slot_id}/Default/Preferences"
+    if os.path.exists(prefs_file):
         try:
-            res = subprocess.run(
-                "find /nix/store -maxdepth 4 -type f -executable -name 'chromium' | head -n 1",
-                shell=True, capture_output=True, text=True
-            )
-            browser = res.stdout.strip()
+            import json as _j
+            with open(prefs_file) as f:
+                prefs = _j.load(f)
+            prefs.setdefault("profile", {})
+            prefs["profile"]["exit_type"] = "Normal"
+            prefs["profile"]["exited_cleanly"] = True
+            with open(prefs_file, "w") as f:
+                _j.dump(prefs, f)
         except Exception:
             pass
 
-    if not browser:
-        print("Chromium not found")
+def _start_slot(slot_id, username):
+    """Launch Xvfb, Chromium, x11vnc, and websockify for one user slot."""
+    display  = f":{_BASE_DISP_NUM + slot_id}"
+    vnc_port = _BASE_VNC_PORT + slot_id
+    ws_port  = _BASE_WS_PORT  + slot_id
+    data_dir = f"/tmp/chromium-data-{slot_id}"
+    stop_ev  = threading.Event()
+    procs    = []
+
+    slot_info = {
+        'slot_id':    slot_id,
+        'username':   username,
+        'display':    display,
+        'vnc_port':   vnc_port,
+        'ws_port':    ws_port,
+        'stop_event': stop_ev,
+        'procs':      procs,
+        'ready':      False,
+    }
+    with _session_lock:
+        _active_slots[slot_id] = slot_info
+
+    os.makedirs(data_dir, exist_ok=True)
+    _reset_chromium_prefs(slot_id)
+
+    # 1. Xvfb
+    xvfb = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", "1280x800x24", "-ac"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    procs.append(xvfb)
+    time.sleep(0.8)
+
+    # 2. Chromium (restarts automatically if it crashes)
+    browser = _find_browser()
+    if browser:
+        env = os.environ.copy()
+        env["DISPLAY"] = display
+        def _browser_loop(stop=stop_ev, sid=slot_id, b=browser, e=env, d=data_dir):
+            while not stop.is_set():
+                try:
+                    proc = subprocess.Popen([
+                        b,
+                        "--no-sandbox", "--disable-gpu",
+                        f"--user-data-dir={d}",
+                        "--disable-dev-shm-usage",
+                        "--no-first-run", "--no-default-browser-check",
+                        "--start-maximized",
+                        "--window-position=0,0", "--window-size=1280,800",
+                        "--disable-extensions", "--disable-sync",
+                        "--disable-translate", "--disable-hang-monitor",
+                        "--disable-component-update", "--disable-default-apps",
+                        "--disable-client-side-phishing-detection",
+                        "--disable-features=TranslateUI,Translate",
+                        "--disable-renderer-backgrounding",
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-background-timer-throttling",
+                        "--autoplay-policy=no-user-gesture-required",
+                        "--allow-running-insecure-content",
+                        "--metrics-recording-only",
+                        "--disk-cache-size=52428800",
+                        "--memory-pressure-off",
+                        "--renderer-process-limit=2",
+                        "--disable-background-networking",
+                        "--max-tiles-for-interest-area=256",
+                        "--disable-session-crashed-bubble",
+                        "--force-device-scale-factor=1",
+                        "--enable-features=NetworkService,NetworkServiceInProcess",
+                        "https://www.google.com"
+                    ], env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    proc.wait()
+                except Exception as ex:
+                    print(f"[slot {sid}] Browser error: {ex}")
+                if stop.is_set():
+                    break
+                time.sleep(2)
+        threading.Thread(target=_browser_loop, daemon=True).start()
+    time.sleep(0.5)
+
+    # 3. x11vnc
+    vnc_proc = subprocess.Popen([
+        "x11vnc",
+        "-display", display,
+        "-nopw", "-rfbport", str(vnc_port),
+        "-forever", "-shared", "-quiet",
+        "-xdamage", "-defer", "5", "-wait", "5",
+        "-xrandr", "resize",
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procs.append(vnc_proc)
+
+    # Wait for VNC to be ready
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2)
+            s.connect(("127.0.0.1", vnc_port))
+            data = s.recv(12)
+            s.close()
+            if data.startswith(b"RFB"):
+                break
+        except OSError:
+            pass
+        time.sleep(0.5)
+
+    # 4. websockify (WebSocket → VNC bridge for this slot)
+    ws_env = os.environ.copy()
+    existing = ws_env.get("PYTHONPATH", "")
+    ws_env["PYTHONPATH"] = f"{_NUMPY_PATH}:{existing}" if existing else _NUMPY_PATH
+    ws_proc = subprocess.Popen(
+        ["websockify", str(ws_port), f"127.0.0.1:{vnc_port}"],
+        env=ws_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    procs.append(ws_proc)
+    time.sleep(0.5)
+
+    slot_info['ready'] = True
+    print(f"[slot {slot_id}] Ready for '{username}' — display={display} ws_port={ws_port}")
+
+def _stop_slot(slot_id):
+    """Kill all processes for a slot and return it to the free pool."""
+    with _session_lock:
+        slot_info = _active_slots.pop(slot_id, None)
+        _free_slots.add(slot_id)
+    if slot_info is None:
         return
-
-    print(f"Launching {browser}...")
-    env = os.environ.copy()
-    env["DISPLAY"] = DISPLAY
-
-    while not _browser_stop_event.is_set():
+    slot_info['stop_event'].set()
+    display = slot_info['display']
+    sid     = slot_info['slot_id']
+    ws_port = slot_info['ws_port']
+    subprocess.run(["pkill", "-9", "-f", f"Xvfb.*{display}"],          capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],        capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],      capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"websockify.*{ws_port}"],    capture_output=True)
+    for proc in slot_info.get('procs', []):
         try:
-            proc = subprocess.Popen([
-                browser,
-                "--no-sandbox",
-                "--disable-gpu",
-                "--user-data-dir=/tmp/chromium-data",
-                "--disable-dev-shm-usage",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-maximized",
-                "--window-position=0,0",
-                "--window-size=1200,800",
-                "--disable-extensions",
-                "--disable-sync",
-                "--disable-translate",
-                "--disable-hang-monitor",
-                "--disable-component-update",
-                "--disable-default-apps",
-                "--disable-client-side-phishing-detection",
-                "--disable-features=TranslateUI,Translate",
-                "--disable-renderer-backgrounding",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-background-timer-throttling",
-                "--autoplay-policy=no-user-gesture-required",
-                "--allow-running-insecure-content",
-                "--metrics-recording-only",
-                "--disk-cache-size=104857600",
-                "--memory-pressure-off",
-                "--max-tiles-for-interest-area=512",
-                "--disable-session-crashed-bubble",
-                "--force-device-scale-factor=1",
-                "--enable-features=NetworkService,NetworkServiceInProcess",
-                "https://www.google.com"
-            ], env=env)
-            proc.wait()
-        except Exception as e:
-            print(f"Browser error: {e}")
-        if _browser_stop_event.is_set():
-            break
-        print("Browser exited, restarting in 2s...")
-        time.sleep(2)
+            proc.kill()
+        except Exception:
+            pass
+    print(f"[slot {slot_id}] Stopped for '{slot_info.get('username', '?')}'")
 
-def run_x11vnc():
-    print("Starting x11vnc...")
-    time.sleep(3)
-    while True:
+def _restart_slot(slot_id):
+    """Restart the browser stack for a slot without changing login state."""
+    with _session_lock:
+        slot_info = _active_slots.get(slot_id)
+    if slot_info is None:
+        return
+    username = slot_info['username']
+    display  = slot_info['display']
+    sid      = slot_info['slot_id']
+    ws_port  = slot_info['ws_port']
+    print(f"[slot {slot_id}] Restarting for '{username}'...")
+    slot_info['stop_event'].set()
+    subprocess.run(["pkill", "-9", "-f", f"Xvfb.*{display}"],       capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],     capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],   capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"websockify.*{ws_port}"], capture_output=True)
+    for proc in slot_info.get('procs', []):
         try:
-            subprocess.run([
-                "x11vnc",
-                "-display", DISPLAY,
-                "-nopw",
-                "-rfbport", str(VNC_PORT),
-                "-forever",
-                "-shared",
-                "-quiet",
-                "-xdamage",
-                "-threads",
-                "-defer", "5",
-                "-wait", "5",
-                "-xrandr", "resize",
-            ])
-        except Exception as e:
-            print(f"x11vnc error: {e}")
-            time.sleep(2)
-        else:
-            time.sleep(1)
-
-def run_novnc(vnc_host):
-    if ":" in vnc_host:
-        target = f"[{vnc_host}]:{VNC_PORT}"
-    else:
-        target = f"{vnc_host}:{VNC_PORT}"
-    print(f"Starting websockify on :{INTERNAL_WS_PORT} -> {target}")
-    env = os.environ.copy()
-    numpy_path = "/nix/store/12nkx5irbnfdh06frm3sxs7drdw9ah4r-python3.11-numpy-1.26.4/lib/python3.11/site-packages"
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{numpy_path}:{existing}" if existing else numpy_path
-    while True:
+            proc.kill()
+        except Exception:
+            pass
+    slot_info['procs'].clear()
+    time.sleep(1.5)
+    # Clear Chromium singleton locks
+    data_dir = f"/tmp/chromium-data-{slot_id}"
+    for lk in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
         try:
-            subprocess.run([
-                "websockify",
-                "--web", NOVNC_WEB,
-                str(INTERNAL_WS_PORT),
-                target
-            ], env=env)
-        except Exception as e:
-            print(f"noVNC error: {e}")
-        time.sleep(3)
-
-
-def _restart_browser_stack():
-    """Kill and restart VNC/Xvfb/Chromium without touching the HTTP server."""
-    global _browser_stop_event
-    print("Restarting browser stack...")
-    # Signal any running browser loop to stop before we kill the process,
-    # so the old thread won't try to relaunch Chromium after we kill it.
-    _browser_stop_event.set()
-    for name in ["x11vnc", "Xvfb", "chromium", "ungoogled-chromium"]:
-        subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
-    time.sleep(2)  # Give old threads time to notice the stop event and exit
-    for lock_file in [
-        "/tmp/chromium-data/SingletonLock",
-        "/tmp/chromium-data/SingletonSocket",
-        "/tmp/chromium-data/SingletonCookie",
-    ]:
-        try:
-            os.remove(lock_file)
+            os.remove(os.path.join(data_dir, lk))
         except FileNotFoundError:
             pass
-    reset_chromium_crash_flag()
-    # Clear the stop event so the new browser thread runs normally
-    _browser_stop_event.clear()
-    threading.Thread(target=run_xvfb, daemon=True).start()
-    time.sleep(1)
-    threading.Thread(target=run_browser, daemon=True).start()
-    threading.Thread(target=run_x11vnc, daemon=True).start()
-    print("Browser stack restarted.")
+    _reset_chromium_prefs(slot_id)
+    # Remove from active map temporarily so _start_slot can re-register it
+    with _session_lock:
+        _active_slots.pop(slot_id, None)
+    _start_slot(slot_id, username)
 
 
 class _AppHandler(http.server.BaseHTTPRequestHandler):
@@ -1151,14 +1211,28 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             password = body.get('password', '')
             if USERS().get(username) == password:
                 with _session_lock:
-                    # Revoke any existing session for this account (kicks the other device)
+                    # Kick any existing session for this account
                     old_token = _user_to_token.get(username)
+                    old_slot  = None
                     if old_token:
+                        old_slot = _token_to_slot.pop(old_token, None)
                         _sessions.pop(old_token, None)
+                    # Make sure there is a free slot
+                    if not _free_slots:
+                        self._send_json(503, {'error': 'Server is full — try again later'})
+                        return
+                    slot_id = min(_free_slots)
+                    _free_slots.discard(slot_id)
                     token = secrets.token_hex(32)
-                    _sessions[token] = username
+                    _sessions[token]       = username
                     _user_to_token[username] = token
-                device_fp = body.get('device_fp', 'unknown')
+                    _token_to_slot[token]  = slot_id
+                # Stop old slot outside the lock
+                if old_slot is not None:
+                    threading.Thread(target=_stop_slot, args=(old_slot,), daemon=True).start()
+                # Start new slot in background (client retries VNC until ready)
+                threading.Thread(target=_start_slot, args=(slot_id, username), daemon=True).start()
+                device_fp    = body.get('device_fp', 'unknown')
                 device_label = body.get('device_label', 'Unknown')
                 threading.Thread(
                     target=_record_device,
@@ -1170,11 +1244,17 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(401, {'error': 'Invalid username or password'})
 
         elif self.path == '/api/restart':
-            if self._auth_token() not in _sessions:
+            token = self._auth_token()
+            if token not in _sessions:
                 self._send_json(403, {'error': 'Unauthorized'})
                 return
+            with _session_lock:
+                slot_id = _token_to_slot.get(token)
+            if slot_id is None:
+                self._send_json(503, {'error': 'No session slot found'})
+                return
             self._send_json(200, {'ok': True})
-            threading.Thread(target=_restart_browser_stack, daemon=True).start()
+            threading.Thread(target=_restart_slot, args=(slot_id,), daemon=True).start()
 
         elif self.path == '/api/admin/auth':
             if self._auth_token() not in _sessions:
@@ -1197,6 +1277,9 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 username = _sessions.pop(token, None)
                 if username and _user_to_token.get(username) == token:
                     _user_to_token.pop(username, None)
+                slot_id = _token_to_slot.pop(token, None)
+            if slot_id is not None:
+                threading.Thread(target=_stop_slot, args=(slot_id,), daemon=True).start()
             self._send_json(200, {'ok': True})
 
         else:
@@ -1261,9 +1344,23 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
     # ── WebSocket tunnel ───────────────────────────────────────────────────────
 
     def _tunnel_websocket(self):
+        # Resolve which websockify port to use for this user's token
+        params  = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        token   = params.get('token', [''])[0]
+        with _session_lock:
+            if token not in _sessions:
+                self.send_error(403, "Unauthorized")
+                return
+            slot_id   = _token_to_slot.get(token)
+            slot_info = _active_slots.get(slot_id) if slot_id is not None else None
+        if slot_info is None:
+            self.send_error(503, "Browser session not ready")
+            return
+        ws_port = slot_info['ws_port']
+
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.connect(('127.0.0.1', INTERNAL_WS_PORT))
+            srv.connect(('127.0.0.1', ws_port))
         except Exception as e:
             self.send_error(502, f"Upstream unavailable: {e}")
             return
@@ -1319,53 +1416,9 @@ def run_app_server():
     print(f"App server listening on :{NOVNC_PORT}")
     server.serve_forever()
 
-def reset_chromium_crash_flag():
-    prefs_dir = "/tmp/chromium-data/Default"
-    prefs_file = os.path.join(prefs_dir, "Preferences")
-    os.makedirs(prefs_dir, exist_ok=True)
-    if os.path.exists(prefs_file):
-        try:
-            import json
-            with open(prefs_file, "r") as f:
-                prefs = json.load(f)
-            prefs.setdefault("profile", {})
-            prefs["profile"]["exit_type"] = "Normal"
-            prefs["profile"]["exited_cleanly"] = True
-            with open(prefs_file, "w") as f:
-                json.dump(prefs, f)
-        except Exception:
-            pass
-
 if __name__ == "__main__":
     print("Cleaning up old processes...")
     kill_old_processes()
-
-    os.makedirs("/tmp/chromium-data", exist_ok=True)
-    # Remove singleton lock so Chromium doesn't think a session is already running
-    for lock_file in [
-        "/tmp/chromium-data/SingletonLock",
-        "/tmp/chromium-data/SingletonSocket",
-        "/tmp/chromium-data/SingletonCookie",
-    ]:
-        try:
-            os.remove(lock_file)
-        except FileNotFoundError:
-            pass
-    reset_chromium_crash_flag()
     setup_novnc_web()
-
-    threading.Thread(target=run_xvfb, daemon=True).start()
-    time.sleep(1)
-
-    threading.Thread(target=run_browser, daemon=True).start()
-    threading.Thread(target=run_x11vnc, daemon=True).start()
-
-    print("Waiting for VNC server...")
-    vnc_host = wait_for_vnc(VNC_PORT, timeout=30)
-    print(f"VNC ready at {vnc_host}:{VNC_PORT}")
-
-    # Start websockify on internal port (WebSocket <-> VNC bridge)
-    threading.Thread(target=run_novnc, args=(vnc_host,), daemon=True).start()
-
-    # Start the main app server on the public port (auth + restart + WS tunnel)
+    # Start the main HTTP server — browser sessions launch on-demand at login
     run_app_server()
