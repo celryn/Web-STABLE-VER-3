@@ -26,13 +26,20 @@ Single-file Python application (`startup`) — no frameworks, pure stdlib + Nix 
 - Heartbeat every 25s (`/api/me`) detects kicks, also records activity for idle timeout
 - **Idle timeout: 30 minutes** — inactive users are auto-freed
 
+### Security
+- Login rate limiting: 5 failed attempts = 30-second lockout per IP
+- Single-session-per-account enforcement (new login kicks old)
+- Admin panel behind separate password gate
+
 ### Performance Tuning (1 vCPU / 4 GiB RAM)
+- MAX_SLOTS = 10 (realistic for 4GB RAM)
 - x11vnc: threaded mode, xdamage, no xrecord/wireframe/xfixes, 3ms defer/wait
 - Chromium: disk cache 64MB, renderer limit 3, V8 heap cap 256MB, GPU compositing off, smooth scrolling off, QUIC enabled, parallel downloads
 - Display: 1024×640 @ 24-bit (35% less VNC data than 1280×720)
 - WebSocket tunnel: 128KB buffer
 - Static files: gzip compressed, 5-min cache
 - No browser at boot — on-demand at login, ~3s server start
+- Idle session timeout: 30 minutes auto-logout
 
 ### Admin Features
 - Admin button visible only for username `Admin`

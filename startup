@@ -45,7 +45,7 @@ NOVNC_SRC  = "/nix/store/0a18wyirbc3ls9yvlw33lrmql94n2hmc-novnc-1.5.0/share/weba
 NOVNC_WEB  = "/tmp/novnc-web"
 
 # Per-user browser session slot pool
-MAX_SLOTS      = 20
+MAX_SLOTS      = 10
 _BASE_DISP_NUM = 100   # Xvfb displays  :100 – :119
 _BASE_VNC_PORT = 5901  # x11vnc ports   5901 – 5920
 _BASE_WS_PORT  = 6001  # websockify     6001 – 6020  (internal only)
@@ -63,6 +63,11 @@ _session_lock  = threading.Lock()
 # Idle session timeout (seconds) — auto-free slots for inactive users
 IDLE_TIMEOUT = 1800   # 30 minutes
 _last_activity = {}   # token -> timestamp of last heartbeat/activity
+
+# Login rate limiting — 5 failed attempts = 30 second lockout
+_LOGIN_MAX_FAILS = 5
+_LOGIN_LOCKOUT   = 30   # seconds
+_login_fails     = {}   # ip -> [fail_count, lockout_expiry_timestamp]
 
 # ── Admin password ─────────────────────────────────────────────────────────────
 _ADMIN_PASS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AD Pass")
@@ -1270,6 +1275,16 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == '/api/login':
+            ip = self.client_address[0]
+            now = time.time()
+            fail_info = _login_fails.get(ip)
+            if fail_info and fail_info[0] >= _LOGIN_MAX_FAILS:
+                remaining = fail_info[1] - now
+                if remaining > 0:
+                    self._send_json(429, {'error': f'Too many attempts — try again in {int(remaining)+1}s'})
+                    return
+                else:
+                    _login_fails.pop(ip, None)
             length = int(self.headers.get('Content-Length', 0))
             try:
                 body = _json.loads(self.rfile.read(length))
@@ -1279,6 +1294,7 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
             username = body.get('username', '')
             password = body.get('password', '')
             if USERS().get(username) == password:
+                _login_fails.pop(ip, None)
                 with _session_lock:
                     # Kick any existing session for this account
                     old_token = _user_to_token.get(username)
@@ -1311,7 +1327,18 @@ class _AppHandler(http.server.BaseHTTPRequestHandler):
                 ).start()
                 self._send_json(200, {'token': token, 'username': username})
             else:
-                self._send_json(401, {'error': 'Invalid username or password'})
+                if ip not in _login_fails:
+                    _login_fails[ip] = [0, 0]
+                _login_fails[ip][0] += 1
+                if _login_fails[ip][0] >= _LOGIN_MAX_FAILS:
+                    _login_fails[ip][1] = time.time() + _LOGIN_LOCKOUT
+                left = _LOGIN_MAX_FAILS - _login_fails[ip][0]
+                err = 'Invalid username or password'
+                if left > 0:
+                    err += f' ({left} attempt{"s" if left != 1 else ""} remaining)'
+                else:
+                    err = f'Too many attempts — locked out for {_LOGIN_LOCKOUT}s'
+                self._send_json(401, {'error': err})
 
         elif self.path == '/api/restart':
             token = self._auth_token()
