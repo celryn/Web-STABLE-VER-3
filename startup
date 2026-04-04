@@ -991,8 +991,22 @@ def _find_browser():
     return None
 
 def _reset_chromium_prefs(slot_id):
-    """Clear the 'crashed' flag so Chromium doesn't show the restore bubble."""
-    prefs_file = f"/tmp/chromium-data-{slot_id}/Default/Preferences"
+    """Clear the 'crashed' flag and wipe session restore so only one fresh window opens."""
+    default_dir = f"/tmp/chromium-data-{slot_id}/Default"
+    # Delete session/window restore files so no old windows reappear
+    for fname in ["Current Session", "Current Tabs", "Last Session", "Last Tabs"]:
+        try:
+            os.remove(os.path.join(default_dir, fname))
+        except FileNotFoundError:
+            pass
+    sessions_dir = os.path.join(default_dir, "Sessions")
+    if os.path.isdir(sessions_dir):
+        import shutil
+        try:
+            shutil.rmtree(sessions_dir)
+        except Exception:
+            pass
+    prefs_file = os.path.join(default_dir, "Preferences")
     if os.path.exists(prefs_file):
         try:
             import json as _j
@@ -1001,6 +1015,7 @@ def _reset_chromium_prefs(slot_id):
             prefs.setdefault("profile", {})
             prefs["profile"]["exit_type"] = "Normal"
             prefs["profile"]["exited_cleanly"] = True
+            prefs.setdefault("session", {})["restore_on_startup"] = 5  # open new tab
             with open(prefs_file, "w") as f:
                 _j.dump(prefs, f)
         except Exception:
@@ -1055,6 +1070,13 @@ def _start_slot(slot_id, username):
     with open(f"{fb_cfg_dir}/init", "w") as _f:
         _f.write("session.screen0.toolbar.visible: false\n")
         _f.write("session.screen0.slit.autoHide: true\n")
+        _f.write(f"session.appsFile: {fb_cfg_dir}/apps\n")
+    # Force every window to open maximized with no decorations
+    with open(f"{fb_cfg_dir}/apps", "w") as _f:
+        _f.write("[app] (.*)\n")
+        _f.write("  [Maximized] {yes}\n")
+        _f.write("  [Deco] {NONE}\n")
+        _f.write("[end]\n")
     wm_env = os.environ.copy()
     wm_env["DISPLAY"] = display
     wm_env["HOME"] = fb_home
