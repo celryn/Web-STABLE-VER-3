@@ -1031,6 +1031,24 @@ def _start_slot(slot_id, username):
     procs.append(xvfb)
     time.sleep(0.5)   # give Xvfb time to bind its socket
 
+    # 1b. Start fluxbox (window manager) so --start-maximized works in Chromium.
+    #     Write a per-slot config that hides the toolbar and slit entirely.
+    fb_home = f"/tmp/fb-home-{slot_id}"
+    fb_cfg_dir = f"{fb_home}/.fluxbox"
+    os.makedirs(fb_cfg_dir, exist_ok=True)
+    with open(f"{fb_cfg_dir}/init", "w") as _f:
+        _f.write("session.screen0.toolbar.visible: false\n")
+        _f.write("session.screen0.slit.autoHide: true\n")
+    wm_env = os.environ.copy()
+    wm_env["DISPLAY"] = display
+    wm_env["HOME"] = fb_home
+    wm_proc = subprocess.Popen(
+        ["fluxbox"],
+        env=wm_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    procs.append(wm_proc)
+    time.sleep(0.4)   # let fluxbox finish initialising
+
     # 2. Start x11vnc AND Chromium simultaneously (neither depends on the other)
     vnc_proc = subprocess.Popen([
         "x11vnc",
@@ -1135,6 +1153,7 @@ def _stop_slot(slot_id):
     subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],        capture_output=True)
     subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],      capture_output=True)
     subprocess.run(["pkill", "-9", "-f", f"websockify.*{ws_port}"],    capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"fb-home-{sid}"],            capture_output=True)
     for proc in slot_info.get('procs', []):
         try:
             proc.kill()
