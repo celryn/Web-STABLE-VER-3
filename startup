@@ -1094,7 +1094,6 @@ def _start_slot(slot_id, username):
         "-nopw", "-rfbport", str(vnc_port),
         "-forever", "-shared", "-quiet",
         "-xdamage", "-noxrecord", "-nowireframe",
-        "-ncache", "10",
         "-defer", "3", "-wait", "3",
         "-xrandr", "resize",
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
