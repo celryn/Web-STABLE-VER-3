@@ -9,8 +9,8 @@
     "69b2677f20d07dc6": {
       "label": "Chrome on Windows",
       "first_seen": "2026-04-03 20:59 UTC",
-      "last_seen": "2026-04-04 01:27 UTC",
-      "logins": 10
+      "last_seen": "2026-04-04 01:36 UTC",
+      "logins": 11
     },
     "test": {
       "label": "test",
@@ -59,14 +59,20 @@
       "first_seen": "2026-04-04 01:35 UTC",
       "last_seen": "2026-04-04 01:35 UTC",
       "logins": 1
+    },
+    "fp-speed": {
+      "label": "speed-test",
+      "first_seen": "2026-04-04 01:40 UTC",
+      "last_seen": "2026-04-04 01:40 UTC",
+      "logins": 1
     }
   },
   "Ashton": {
     "69b2677f20d07dc6": {
       "label": "Chrome on Windows",
       "first_seen": "2026-04-03 21:49 UTC",
-      "last_seen": "2026-04-03 23:51 UTC",
-      "logins": 3
+      "last_seen": "2026-04-04 01:37 UTC",
+      "logins": 4
     }
   }
 }

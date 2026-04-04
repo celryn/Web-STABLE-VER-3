@@ -532,12 +532,12 @@ def setup_novnc_web():
   <div id="settings-panel">
     <div class="panel-title">Stream Quality</div>
     <div class="setting-row">
-      <div class="setting-label">Quality <span id="q-val">6</span></div>
-      <input type="range" id="quality-slider" min="1" max="9" value="6">
+      <div class="setting-label">Quality <span id="q-val">7</span></div>
+      <input type="range" id="quality-slider" min="1" max="9" value="7">
     </div>
     <div class="setting-row">
-      <div class="setting-label">Compression <span id="c-val">5</span></div>
-      <input type="range" id="compression-slider" min="0" max="9" value="5">
+      <div class="setting-label">Compression <span id="c-val">3</span></div>
+      <input type="range" id="compression-slider" min="0" max="9" value="3">
     </div>
     <button class="apply-btn" id="apply-btn">Apply</button>
     <hr class="divider">
@@ -1141,8 +1141,9 @@ def _start_slot(slot_id, username):
         "-threads",
         "-xdamage", "-noxrecord", "-nowireframe",
         "-noxfixes",
-        "-defer", "3", "-wait", "3",
+        "-defer", "1", "-wait", "1",
         "-xrandr", "resize",
+        "-input_skip", "4",
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procs.append(vnc_proc)
 
@@ -1165,18 +1166,16 @@ def _start_slot(slot_id, username):
                         "--disable-translate", "--disable-hang-monitor",
                         "--disable-component-update", "--disable-default-apps",
                         "--disable-client-side-phishing-detection",
-                        "--disable-features=TranslateUI,Translate,ScrollAnimations,SmoothScrolling",
+                        "--disable-features=TranslateUI,Translate",
                         "--disable-renderer-backgrounding",
                         "--disable-backgrounding-occluded-windows",
                         "--disable-background-timer-throttling",
                         "--autoplay-policy=no-user-gesture-required",
                         "--allow-running-insecure-content",
                         "--metrics-recording-only",
-                        "--disk-cache-size=67108864",
-                        "--renderer-process-limit=3",
+                        "--disk-cache-size=268435456",
+                        "--renderer-process-limit=5",
                         "--disable-gpu-compositing",
-                        "--disable-smooth-scrolling",
-                        "--max-tiles-for-interest-area=256",
                         "--disable-session-crashed-bubble",
                         "--disable-logging",
                         "--log-level=3",
@@ -1184,8 +1183,11 @@ def _start_slot(slot_id, username):
                         "--enable-quic",
                         "--enable-tcp-fast-open",
                         "--no-zygote",
-                        "--js-flags=--max-old-space-size=256",
-                        "--enable-features=NetworkService,NetworkServiceInProcess,ParallelDownloading",
+                        "--js-flags=--max-old-space-size=512",
+                        "--v8-cache-options=code",
+                        "--enable-features=NetworkService,NetworkServiceInProcess,ParallelDownloading,BackForwardCache,LazyImageLoading,LazyFrameLoading,AsyncDns",
+                        "--enable-lazy-image-loading",
+                        "--enable-lazy-frame-loading",
                         "about:blank"
                     ], env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     proc.wait()
