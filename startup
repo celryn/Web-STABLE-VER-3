@@ -1039,7 +1039,7 @@ def _start_slot(slot_id, username):
         "-forever", "-shared", "-quiet",
         "-xdamage", "-noxrecord", "-nowireframe",
         "-ncache", "10",
-        "-defer", "8", "-wait", "8",
+        "-defer", "3", "-wait", "3",
         "-xrandr", "resize",
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procs.append(vnc_proc)
@@ -1070,17 +1070,17 @@ def _start_slot(slot_id, username):
                         "--autoplay-policy=no-user-gesture-required",
                         "--allow-running-insecure-content",
                         "--metrics-recording-only",
-                        "--disk-cache-size=67108864",
+                        "--disk-cache-size=268435456",
                         "--memory-pressure-off",
-                        "--renderer-process-limit=2",
-                        "--max-tiles-for-interest-area=256",
+                        "--max-tiles-for-interest-area=512",
                         "--disable-session-crashed-bubble",
                         "--disable-logging",
                         "--log-level=3",
                         "--force-device-scale-factor=1",
-                        "--enable-features=NetworkService,NetworkServiceInProcess",
+                        "--enable-quic",
                         "--enable-tcp-fast-open",
                         "--no-zygote",
+                        "--enable-features=NetworkService,NetworkServiceInProcess,ParallelDownloading",
                         "about:blank"
                     ], env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     proc.wait()
