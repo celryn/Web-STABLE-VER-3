@@ -143,6 +143,14 @@ def kill_old_processes():
     time.sleep(1)
     kill_port_users(NOVNC_PORT)
     time.sleep(0.5)
+    # Clean up stale X11 lock files for all possible slot displays
+    for sid in range(MAX_SLOTS):
+        disp_num = _BASE_DISP_NUM + sid
+        for stale in [f"/tmp/.X{disp_num}-lock", f"/tmp/.X11-unix/X{disp_num}"]:
+            try:
+                os.remove(stale)
+            except FileNotFoundError:
+                pass
 
 def wait_for_vnc(port, timeout=30):
     """Wait for VNC, verifying the RFB handshake. Returns the working address."""
@@ -1022,6 +1030,14 @@ def _start_slot(slot_id, username):
 
     os.makedirs(data_dir, exist_ok=True)
     _reset_chromium_prefs(slot_id)
+
+    # Clean up any stale X11 lock/socket from a previous run on this display
+    disp_num = _BASE_DISP_NUM + slot_id
+    for stale in [f"/tmp/.X{disp_num}-lock", f"/tmp/.X11-unix/X{disp_num}"]:
+        try:
+            os.remove(stale)
+        except FileNotFoundError:
+            pass
 
     # 1. Xvfb
     xvfb = subprocess.Popen(
