@@ -503,12 +503,12 @@ def setup_novnc_web():
   <div id="settings-panel">
     <div class="panel-title">Stream Quality</div>
     <div class="setting-row">
-      <div class="setting-label">Quality <span id="q-val">9</span></div>
-      <input type="range" id="quality-slider" min="1" max="9" value="9">
+      <div class="setting-label">Quality <span id="q-val">6</span></div>
+      <input type="range" id="quality-slider" min="1" max="9" value="6">
     </div>
     <div class="setting-row">
-      <div class="setting-label">Compression <span id="c-val">2</span></div>
-      <input type="range" id="compression-slider" min="0" max="9" value="2">
+      <div class="setting-label">Compression <span id="c-val">5</span></div>
+      <input type="range" id="compression-slider" min="0" max="9" value="5">
     </div>
     <button class="apply-btn" id="apply-btn">Apply</button>
     <hr class="divider">
@@ -748,7 +748,7 @@ def setup_novnc_web():
       const wsUrl = proto + '//' + location.host + '/websockify?token=' + encodeURIComponent(getToken());
 
       rfb = new RFB(screen, wsUrl);
-      rfb.scaleViewport    = false;
+      rfb.scaleViewport    = true;
       rfb.resizeSession    = false;
       rfb.viewOnly         = false;
       rfb.qualityLevel     = parseInt(qSlider.value);
@@ -1025,13 +1025,25 @@ def _start_slot(slot_id, username):
 
     # 1. Xvfb
     xvfb = subprocess.Popen(
-        ["Xvfb", display, "-screen", "0", "1280x800x24", "-ac"],
+        ["Xvfb", display, "-screen", "0", "1280x800x24", "-ac", "-nolisten", "tcp"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     procs.append(xvfb)
-    time.sleep(0.8)
+    time.sleep(0.5)   # give Xvfb time to bind its socket
 
-    # 2. Chromium (restarts automatically if it crashes)
+    # 2. Start x11vnc AND Chromium simultaneously (neither depends on the other)
+    vnc_proc = subprocess.Popen([
+        "x11vnc",
+        "-display", display,
+        "-nopw", "-rfbport", str(vnc_port),
+        "-forever", "-shared", "-quiet",
+        "-xdamage", "-noxrecord", "-nowireframe",
+        "-ncache", "10",
+        "-defer", "8", "-wait", "8",
+        "-xrandr", "resize",
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procs.append(vnc_proc)
+
     browser = _find_browser()
     if browser:
         env = os.environ.copy()
@@ -1058,14 +1070,16 @@ def _start_slot(slot_id, username):
                         "--autoplay-policy=no-user-gesture-required",
                         "--allow-running-insecure-content",
                         "--metrics-recording-only",
-                        "--disk-cache-size=52428800",
+                        "--disk-cache-size=67108864",
                         "--memory-pressure-off",
                         "--renderer-process-limit=2",
-                        "--disable-background-networking",
                         "--max-tiles-for-interest-area=256",
                         "--disable-session-crashed-bubble",
+                        "--disable-logging",
+                        "--log-level=3",
                         "--force-device-scale-factor=1",
                         "--enable-features=NetworkService,NetworkServiceInProcess",
+                        "--enable-tcp-fast-open",
                         "https://www.google.com"
                     ], env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     proc.wait()
@@ -1075,25 +1089,13 @@ def _start_slot(slot_id, username):
                     break
                 time.sleep(2)
         threading.Thread(target=_browser_loop, daemon=True).start()
-    time.sleep(0.5)
 
-    # 3. x11vnc
-    vnc_proc = subprocess.Popen([
-        "x11vnc",
-        "-display", display,
-        "-nopw", "-rfbport", str(vnc_port),
-        "-forever", "-shared", "-quiet",
-        "-xdamage", "-defer", "5", "-wait", "5",
-        "-xrandr", "resize",
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    procs.append(vnc_proc)
-
-    # Wait for VNC to be ready
+    # Wait for VNC — poll every 0.2 s for faster startup detection
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2)
+            s.settimeout(1)
             s.connect(("127.0.0.1", vnc_port))
             data = s.recv(12)
             s.close()
@@ -1101,18 +1103,18 @@ def _start_slot(slot_id, username):
                 break
         except OSError:
             pass
-        time.sleep(0.5)
+        time.sleep(0.2)
 
-    # 4. websockify (WebSocket → VNC bridge for this slot)
+    # 3. websockify (WebSocket → VNC bridge for this slot)
     ws_env = os.environ.copy()
     existing = ws_env.get("PYTHONPATH", "")
     ws_env["PYTHONPATH"] = f"{_NUMPY_PATH}:{existing}" if existing else _NUMPY_PATH
     ws_proc = subprocess.Popen(
-        ["websockify", str(ws_port), f"127.0.0.1:{vnc_port}"],
+        ["websockify", "--idle-timeout=0", str(ws_port), f"127.0.0.1:{vnc_port}"],
         env=ws_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     procs.append(ws_proc)
-    time.sleep(0.5)
+    time.sleep(0.3)
 
     slot_info['ready'] = True
     print(f"[slot {slot_id}] Ready for '{username}' — display={display} ws_port={ws_port}")
