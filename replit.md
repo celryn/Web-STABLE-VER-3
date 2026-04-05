@@ -1,4 +1,4 @@
-# Kent's VB — Virtual Browser
+# LXUS's VB — Virtual Browser
 
 ## Overview
 
