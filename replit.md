@@ -9,8 +9,9 @@ A virtual browser web app that serves isolated private Chromium sessions per use
 Single-file Python application (`startup`) — no frameworks, pure stdlib + Nix packages.
 
 ### Slot System (per-user isolation)
-- **MAX_SLOTS = 20** concurrent browser sessions
-- Each login allocates a slot with: Xvfb (display `:100+N`), fluxbox (window manager), x11vnc (port `5901+N`), Chromium (data dir `/tmp/chromium-data-N`), websockify (port `6001+N`)
+- **MAX_SLOTS = 10** concurrent browser sessions
+- Each login allocates a slot with: **Xvnc** (TigerVNC, combined X server + VNC server, display `:100+N`, VNC port `5901+N`), fluxbox (window manager), Chromium (data dir `/tmp/chromium-data-N`), websockify (port `6001+N`)
+- Falls back to Xvfb + x11vnc if Xvnc is unavailable (Xvnc is preferred because Xvfb fails with OSError EIO in production deployment containers)
 - Logout/kick/idle timeout frees the slot
 - WebSocket tunnel routes by auth token to the correct websockify port
 

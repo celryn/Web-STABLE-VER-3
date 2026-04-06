@@ -65,6 +65,36 @@
       "first_seen": "2026-04-04 01:40 UTC",
       "last_seen": "2026-04-04 01:40 UTC",
       "logins": 1
+    },
+    "fp-debug": {
+      "label": "debug",
+      "first_seen": "2026-04-06 14:04 UTC",
+      "last_seen": "2026-04-06 14:04 UTC",
+      "logins": 1
+    },
+    "fp-ws": {
+      "label": "wstest",
+      "first_seen": "2026-04-06 14:06 UTC",
+      "last_seen": "2026-04-06 14:06 UTC",
+      "logins": 1
+    },
+    "fp-xvnc": {
+      "label": "xvnc-test",
+      "first_seen": "2026-04-06 14:11 UTC",
+      "last_seen": "2026-04-06 14:11 UTC",
+      "logins": 1
+    },
+    "fp2": {
+      "label": "test2",
+      "first_seen": "2026-04-06 14:12 UTC",
+      "last_seen": "2026-04-06 14:12 UTC",
+      "logins": 1
+    },
+    "fp3": {
+      "label": "test3",
+      "first_seen": "2026-04-06 14:15 UTC",
+      "last_seen": "2026-04-06 14:15 UTC",
+      "logins": 1
     }
   },
   "Ashton": {

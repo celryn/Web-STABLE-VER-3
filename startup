@@ -153,7 +153,7 @@ def kill_port_users(port):
         print(f"Killed PIDs using port {port}: {pids_killed}")
 
 def kill_old_processes():
-    for name in ["x11vnc", "Xvfb", "websockify", "chromium", "ungoogled-chromium"]:
+    for name in ["Xvnc", "x11vnc", "Xvfb", "websockify", "chromium", "ungoogled-chromium"]:
         subprocess.run(["pkill", "-9", "-f", name], capture_output=True)
     time.sleep(1)
     kill_port_users(NOVNC_PORT)
@@ -1033,6 +1033,34 @@ def _find_browser():
         pass
     return None
 
+def _find_xvnc():
+    """Return path to TigerVNC Xvnc binary (combined X + VNC server), or None."""
+    for cmd in ["Xvnc"]:
+        try:
+            res = subprocess.run(["which", cmd], check=True, capture_output=True, text=True)
+            return res.stdout.strip()
+        except subprocess.CalledProcessError:
+            continue
+    try:
+        res = subprocess.run(
+            "find /nix/store -maxdepth 5 -type f -executable -name 'Xvnc' | head -n 1",
+            shell=True, capture_output=True, text=True
+        )
+        b = res.stdout.strip()
+        if b:
+            return b
+    except Exception:
+        pass
+    return None
+
+_XVNC_BIN = None
+
+def _get_xvnc():
+    global _XVNC_BIN
+    if _XVNC_BIN is None:
+        _XVNC_BIN = _find_xvnc()
+    return _XVNC_BIN
+
 def _reset_chromium_prefs(slot_id):
     """Clear the 'crashed' flag and wipe session restore so only one fresh window opens."""
     default_dir = f"/tmp/chromium-data-{slot_id}/Default"
@@ -1065,7 +1093,10 @@ def _reset_chromium_prefs(slot_id):
             pass
 
 def _start_slot(slot_id, username):
-    """Launch Xvfb, Chromium, x11vnc, and websockify for one user slot."""
+    """Launch X server, Chromium, and websockify for one user slot.
+    Uses Xvnc (TigerVNC) when available — a combined X+VNC server that works
+    in restricted production containers where Xvfb fails. Falls back to
+    Xvfb + x11vnc if Xvnc is not present."""
     display  = f":{_BASE_DISP_NUM + slot_id}"
     vnc_port = _BASE_VNC_PORT + slot_id
     ws_port  = _BASE_WS_PORT  + slot_id
@@ -1099,13 +1130,32 @@ def _start_slot(slot_id, username):
         except FileNotFoundError:
             pass
 
-    # 1. Xvfb
-    xvfb = subprocess.Popen(
-        ["Xvfb", display, "-screen", "0", f"{res_w}x{res_h}x24", "-ac", "-nolisten", "tcp"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    procs.append(xvfb)
-    time.sleep(0.5)   # give Xvfb time to bind its socket
+    xvnc_bin = _get_xvnc()
+    use_xvnc = bool(xvnc_bin)
+
+    if use_xvnc:
+        # 1. Xvnc — TigerVNC: combined X server + VNC server in one process.
+        #    Works in production containers where Xvfb fails (OSError EIO).
+        xvnc_proc = subprocess.Popen([
+            xvnc_bin, display,
+            "-rfbport", str(vnc_port),
+            "-SecurityTypes", "None",
+            "-geometry", f"{res_w}x{res_h}",
+            "-depth", "24",
+            "-ac",
+            "-localhost",
+            "-desktop", "LXUS VB",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        procs.append(xvnc_proc)
+        time.sleep(0.8)   # give Xvnc time to bind display socket and VNC port
+    else:
+        # 1. Fallback: Xvfb (works in dev, may fail in some prod containers)
+        xvfb = subprocess.Popen(
+            ["Xvfb", display, "-screen", "0", f"{res_w}x{res_h}x24", "-ac", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        procs.append(xvfb)
+        time.sleep(0.5)
 
     # 1b. Start fluxbox (window manager) so --start-maximized works in Chromium.
     #     Write a per-slot config that hides the toolbar and slit entirely.
@@ -1132,20 +1182,21 @@ def _start_slot(slot_id, username):
     procs.append(wm_proc)
     time.sleep(0.4)   # let fluxbox finish initialising
 
-    # 2. Start x11vnc AND Chromium simultaneously (neither depends on the other)
-    vnc_proc = subprocess.Popen([
-        "x11vnc",
-        "-display", display,
-        "-nopw", "-rfbport", str(vnc_port),
-        "-forever", "-shared", "-quiet",
-        "-threads",
-        "-xdamage", "-noxrecord", "-nowireframe",
-        "-noxfixes",
-        "-defer", "1", "-wait", "1",
-        "-xrandr", "resize",
-        "-input_skip", "4",
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    procs.append(vnc_proc)
+    if not use_xvnc:
+        # 2. x11vnc only needed when Xvfb is used (Xvnc provides its own VNC)
+        vnc_proc = subprocess.Popen([
+            "x11vnc",
+            "-display", display,
+            "-nopw", "-rfbport", str(vnc_port),
+            "-forever", "-shared", "-quiet",
+            "-threads",
+            "-xdamage", "-noxrecord", "-nowireframe",
+            "-noxfixes",
+            "-defer", "1", "-wait", "1",
+            "-xrandr", "resize",
+            "-input_skip", "4",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        procs.append(vnc_proc)
 
     browser = _find_browser()
     if browser:
@@ -1238,6 +1289,7 @@ def _stop_slot(slot_id):
     display = slot_info['display']
     sid     = slot_info['slot_id']
     ws_port = slot_info['ws_port']
+    subprocess.run(["pkill", "-9", "-f", f"Xvnc.*{display}"],           capture_output=True)
     subprocess.run(["pkill", "-9", "-f", f"Xvfb.*{display}"],          capture_output=True)
     subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],        capture_output=True)
     subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],      capture_output=True)
@@ -1262,10 +1314,11 @@ def _restart_slot(slot_id):
     ws_port  = slot_info['ws_port']
     print(f"[slot {slot_id}] Restarting for '{username}'...")
     slot_info['stop_event'].set()
-    subprocess.run(["pkill", "-9", "-f", f"Xvfb.*{display}"],       capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],     capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],   capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", f"websockify.*{ws_port}"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"Xvnc.*{display}"],        capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"Xvfb.*{display}"],        capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"x11vnc.*{display}"],      capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"chromium-data-{sid}"],    capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", f"websockify.*{ws_port}"],  capture_output=True)
     for proc in slot_info.get('procs', []):
         try:
             proc.kill()
