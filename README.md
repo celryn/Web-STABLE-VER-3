@@ -1,3 +1,6 @@
-# Blank App
-
-This is a blank app. See our [app configuration docs](https://docs.replit.com/replit-app/configuration#replit-app-configuration) for more information on how to configure it. Or visit the Dependencies pane to add languages, language packages, and system packages.
+A simple proxy browser made with replit.
+- Built in browser
+- Optimized (to the best of my ability...)
+- AD Pass - Admin password, lets you see all accounts and how many devices are using them.
+- ACC - Account registry, lets you add and remove accounts allowed on the website.
+- Self Host on Replit or Locally!
